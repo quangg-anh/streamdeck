@@ -1,0 +1,32 @@
+{
+  "name": "streamfx",
+  "private": true,
+  "engines": { "node": ">=22.14.0", "npm": ">=10" },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=@streamfx/api",
+    "build:packages": "npm run build --workspace=@streamfx/types && npm run build --workspace=@streamfx/protocol",
+    "build": "npm run build:packages && npm run build --workspace=@streamfx/api && npm run build --workspace=@streamfx/web",
+    "pretypecheck": "npm run build:packages",
+    "prelint": "npm run build:packages",
+    "pretest": "npm run build:packages",
+    "start": "npm run start --workspace=@streamfx/api",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "npm run test:e2e --workspace=@streamfx/web",
+    "prisma:generate": "npm run prisma:generate --workspace=@streamfx/api",
+    "prisma:migrate": "npm run prisma:migrate --workspace=@streamfx/api",
+    "prisma:migrate:dev": "npm run prisma:migrate:dev --workspace=@streamfx/api",
+    "prisma:seed": "npm run prisma:seed --workspace=@streamfx/api"
+  },
+  "overrides": {
+    "postcss": "^8.5.23"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

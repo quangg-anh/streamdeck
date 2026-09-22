@@ -1,0 +1,10 @@
+export type ActionType = "image" | "video" | "audio" | "tts" | "confetti" | "wait" | "clear" | "stop";
+export type QueueMode = "QUEUE" | "REPLACE" | "DROP";
+export type EffectAction = { type: ActionType; durationMs: number; url?: string; text?: string; volume?: number; rate?: number };
+export type Effect = { id: string; projectId: string; name: string; actions: EffectAction[]; mode: QueueMode; cooldownMs: number; enabled: boolean };
+export type DeckButton = { id: string; projectId: string; label: string; color: string; icon?: string; effectId: string; position: number; enabled: boolean; cooldownMs: number };
+export type Trigger = { id: string; projectId: string; provider: string; event: string; match?: string; effectId: string; cooldownMs: number; enabled: boolean; config?: unknown };
+export type Project = { id: string; name: string; description: string; userId: string };
+export type Asset = { id: string; projectId: string; name: string; mime: string; url: string; size: number; sha256: string };
+export type Settings = { projectId: string; ttsEnabled: boolean; ttsMaxLength: number; ttsRate: number; ttsVoice?: string; volume: number; queueLimit: number; developerMode: boolean; allowMockEvents: boolean };
+export type StreamEvent = { provider: string; type: string; value?: string; user?: string; metadata?: Record<string, unknown> };

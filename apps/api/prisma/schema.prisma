@@ -1,0 +1,102 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum QueueMode {
+  QUEUE
+  REPLACE
+  DROP
+}
+
+model User {
+  id       String    @id
+  projects Project[]
+}
+
+model Project {
+  id          String       @id @default(cuid())
+  name        String
+  description String       @default("")
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  effects     Effect[]
+  buttons     DeckButton[]
+  triggers    Trigger[]
+  assets      Asset[]
+  settings    Settings?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Effect {
+  id         String       @id @default(cuid())
+  projectId  String
+  project    Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name       String
+  actions    Json
+  mode       QueueMode    @default(QUEUE)
+  cooldownMs Int          @default(0)
+  enabled    Boolean      @default(true)
+  buttons    DeckButton[]
+  triggers   Trigger[]
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+}
+
+model DeckButton {
+  id         String  @id @default(cuid())
+  projectId  String
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  label      String
+  color      String  @default("#7c3aed")
+  icon       String?
+  effectId   String
+  effect     Effect  @relation(fields: [effectId], references: [id], onDelete: Cascade)
+  position   Int     @default(0)
+  enabled    Boolean @default(true)
+  cooldownMs Int     @default(0)
+}
+
+model Trigger {
+  id         String  @id @default(cuid())
+  projectId  String
+  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  provider   String  @default("mock")
+  event      String
+  match      String?
+  effectId   String
+  effect     Effect  @relation(fields: [effectId], references: [id], onDelete: Cascade)
+  cooldownMs Int     @default(5000)
+  enabled    Boolean @default(true)
+  config     Json?
+}
+
+model Asset {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  mime      String
+  path      String
+  size      Int
+  sha256    String
+  createdAt DateTime @default(now())
+}
+
+model Settings {
+  projectId       String  @id
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ttsEnabled      Boolean @default(true)
+  ttsMaxLength    Int     @default(280)
+  ttsRate         Float   @default(1)
+  ttsVoice        String?
+  volume          Float   @default(0.8)
+  queueLimit      Int     @default(50)
+  developerMode   Boolean @default(false)
+  allowMockEvents Boolean @default(true)
+}
