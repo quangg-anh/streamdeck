@@ -1,24 +1,20 @@
 "use client";
 import { use, useEffect, useRef, useState } from "react";
 import { defaultSettings, OverlayRuntime, parseMessage, type Frame, type OverlaySettings } from "../runtime";
-import { playMedia, speak } from "../playback";
+import { playMedia } from "../playback";
 const wsUrl = () => `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
 function Playback({ frame, settings }: { frame: Frame; settings: OverlaySettings }) {
   const media = useRef<HTMLVideoElement & HTMLAudioElement>(null);
   const latest = useRef(settings); latest.current = settings;
   useEffect(() => {
-    if (frame.action.type === "tts") return speak(frame, latest.current,
-      typeof window.speechSynthesis === "undefined" ? undefined : window.speechSynthesis,
-      typeof window.SpeechSynthesisUtterance === "undefined" ? undefined : window.SpeechSynthesisUtterance);
     if (media.current) return playMedia(media.current, frame, latest.current);
   }, [frame]);
   useEffect(() => {
     if (media.current) media.current.volume = settings.volume * (frame.action.volume ?? 1);
-    if (frame.action.type === "tts" && !settings.ttsEnabled) frame.done();
   }, [frame, settings]);
   const action = frame.action;
-  return <>{action.type === "image" && <img src={action.url} alt="" onError={frame.done} />}{action.type === "video" && <video ref={media} src={action.url} playsInline />}{action.type === "audio" && <audio ref={media} src={action.url} />}{action.type === "tts" && <div className="caption">{action.text?.slice(0, settings.ttsMaxLength)}</div>}{action.type === "confetti" && <div className="confetti">{Array.from({ length: 80 }, (_, i) => <i key={i} style={{ left: `${(i * 47) % 100}%`, animationDelay: `${(i % 20) * -.1}s`, background: `hsl(${i * 41} 90% 60%)` }} />)}</div>}</>;
+  return <>{action.type === "image" && <img src={action.url} alt="" loading="eager" decoding="async" onError={frame.done} />}{action.type === "video" && <video ref={media} src={action.url} playsInline preload="auto" />}{action.type === "audio" && <audio ref={media} src={action.url} preload="auto" />}{action.type === "confetti" && <div className="confetti">{Array.from({ length: 50 }, (_, i) => <i key={i} style={{ left: `${(i * 47) % 100}%`, animationDelay: `${(i % 20) * -.1}s`, background: `hsl(${i * 41} 90% 60%)` }} />)}</div>}</>;
 }
 export default function Overlay({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);

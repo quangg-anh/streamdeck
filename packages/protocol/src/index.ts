@@ -1,11 +1,10 @@
 import { z } from "zod";
 
 export const visualActionSchema = z.object({ type: z.enum(["image", "video", "audio"]), url: z.string().trim().min(1).max(4096).refine(value => { try { return ["http:", "https:", "blob:"].includes(new URL(value, "http://local").protocol); } catch { return false; } }, "Unsupported media URL"), durationMs: z.number().int().min(100).max(300000), volume: z.number().min(0).max(1).optional() });
-export const ttsActionSchema = z.object({ type: z.literal("tts"), text: z.string().min(1).max(1000), durationMs: z.number().int().min(100).max(300000), rate: z.number().min(0.5).max(2).optional() });
 export const confettiActionSchema = z.object({ type: z.literal("confetti"), durationMs: z.number().int().min(100).max(300000) });
 export const waitActionSchema = z.object({ type: z.literal("wait"), durationMs: z.number().int().min(0).max(300000) });
 export const controlActionSchema = z.object({ type: z.enum(["clear", "stop"]), durationMs: z.number().int().min(0).max(300000).default(0) });
-export const effectActionSchema = z.union([visualActionSchema, ttsActionSchema, confettiActionSchema, waitActionSchema, controlActionSchema]);
+export const effectActionSchema = z.union([visualActionSchema, confettiActionSchema, waitActionSchema, controlActionSchema]);
 export const queueModeSchema = z.enum(["QUEUE", "REPLACE", "DROP"]);
 export const subscribeSchema = z.object({ kind: z.literal("subscribe"), projectId: z.string().min(1), client: z.enum(["deck", "overlay", "developer"]), token: z.string().optional() });
 export const subscribedSchema = z.object({ kind: z.literal("subscribed"), projectId: z.string(), heartbeatMs: z.number().int().positive() });
@@ -13,7 +12,7 @@ export const effectMessageSchema = z.object({ kind: z.literal("effect"), project
 export const controlMessageSchema = z.object({ kind: z.literal("control"), projectId: z.string(), command: z.enum(["clear", "stop"]), runId: z.string().optional() });
 export const heartbeatSchema = z.object({ kind: z.enum(["ping", "pong"]), at: z.number() });
 export const clientMessageSchema = z.union([subscribeSchema, heartbeatSchema]);
-export const overlaySettingsSchema = z.object({ volume: z.number().min(0).max(1), ttsEnabled: z.boolean(), ttsVoice: z.string().max(100).nullable(), ttsRate: z.number().min(0.5).max(2), ttsMaxLength: z.number().int().min(1).max(1000), queueLimit: z.number().int().min(1).max(200) });
+export const overlaySettingsSchema = z.object({ volume: z.number().min(0).max(1), queueLimit: z.number().int().min(1).max(200) });
 export const settingsMessageSchema = z.object({ kind: z.literal("settings"), projectId: z.string(), settings: overlaySettingsSchema });
 export const serverMessageSchema = z.union([subscribedSchema, effectMessageSchema, controlMessageSchema, heartbeatSchema, settingsMessageSchema]);
 export type EffectAction = z.infer<typeof effectActionSchema>;

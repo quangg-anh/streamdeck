@@ -46,7 +46,6 @@ model Project {
   overlayToken String       @unique @default(cuid())
   effects      Effect[]
   buttons      DeckButton[]
-  triggers     Trigger[]
   assets       Asset[]
   settings     Settings?
   createdAt    DateTime     @default(now())
@@ -64,7 +63,7 @@ model Effect {
   cooldownMs Int          @default(0)
   enabled    Boolean      @default(true)
   buttons    DeckButton[]
-  triggers   Trigger[]
+
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt
 }
@@ -83,20 +82,6 @@ model DeckButton {
   cooldownMs Int     @default(0)
 }
 
-model Trigger {
-  id         String  @id @default(cuid())
-  projectId  String
-  project    Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  provider   String  @default("mock")
-  event      String
-  match      String?
-  effectId   String
-  effect     Effect  @relation(fields: [effectId], references: [id], onDelete: Cascade)
-  cooldownMs Int     @default(5000)
-  enabled    Boolean @default(true)
-  config     Json?
-}
-
 model Asset {
   id        String   @id @default(cuid())
   projectId String
@@ -110,17 +95,12 @@ model Asset {
 }
 
 model Settings {
-  projectId       String  @id
-  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  ttsEnabled      Boolean @default(true)
-  ttsMaxLength    Int     @default(280)
-  ttsRate         Float   @default(1)
-  ttsVoice        String?
-  volume          Float   @default(0.8)
-  queueLimit      Int     @default(50)
-  developerMode   Boolean @default(false)
-  allowMockEvents Boolean @default(true)
-  userToken       String  @unique @default(cuid())
+  projectId     String  @id
+  project       Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  volume        Float   @default(0.8)
+  queueLimit    Int     @default(50)
+  developerMode Boolean @default(false)
+  userToken     String  @unique @default(cuid())
 }
 
 // Atomic cooldown claims; expired rows are re-claimed via delete + create in one transaction.

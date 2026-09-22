@@ -238,7 +238,7 @@ describe("API with mocked DB", () => {
     socket.send(JSON.stringify({ kind: "subscribe", projectId: "p", client: "overlay", token: "tok-1" }));
     await snapshot;
     expect(messages).toContainEqual(expect.objectContaining({ kind: "settings", settings: expect.objectContaining({ volume: 0.8 }) }));
-    db.settings.upsert.mockResolvedValue({ volume: 0, ttsEnabled: true, ttsVoice: null, ttsRate: 1, ttsMaxLength: 280, queueLimit: 50 });
+    db.settings.upsert.mockResolvedValue({ volume: 0, queueLimit: 50 });
     const update = new Promise<unknown>(resolve => socket.once("message", raw => resolve(JSON.parse(raw.toString()))));
     expect((await app.inject({ method: "PATCH", url: "/api/projects/p/settings", cookies: { sfx_session: "sess-1" }, payload: { volume: 0 } })).statusCode).toBe(200);
     expect(await update).toEqual(expect.objectContaining({ kind: "settings", settings: expect.objectContaining({ volume: 0 }) }));

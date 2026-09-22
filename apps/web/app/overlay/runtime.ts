@@ -1,7 +1,7 @@
 import type { EffectAction, QueueMode } from "@streamfx/types";
 
-export type OverlaySettings = { volume: number; ttsEnabled: boolean; ttsVoice: string | null; ttsRate: number; ttsMaxLength: number; queueLimit: number };
-export const defaultSettings: OverlaySettings = { volume: 1, ttsEnabled: true, ttsVoice: null, ttsRate: 1, ttsMaxLength: 280, queueLimit: 50 };
+export type OverlaySettings = { volume: number; queueLimit: number };
+export const defaultSettings: OverlaySettings = { volume: 1, queueLimit: 50 };
 export type Run = { runId: string; actions: EffectAction[] };
 export type Frame = { key: number; action: EffectAction; signal: AbortSignal; done: () => void };
 type Message = { kind: "effect"; mode: QueueMode; runId: string; actions: EffectAction[] } | { kind: "control"; command: "clear" | "stop" } | { kind: "settings"; settings: Partial<OverlaySettings> } | { kind: "ping"; at: number };
@@ -23,7 +23,7 @@ export function parseMessage(raw: unknown, projectId: string): Message | null {
       for (const key of Object.keys(defaultSettings) as (keyof OverlaySettings)[]) {
         if (!(key in s)) continue;
         const v = s[key];
-        const valid = key === "volume" ? number(v, 0, 1) : key === "ttsRate" ? number(v, .5, 2) : key === "queueLimit" ? integer(v, 1, 200) : key === "ttsMaxLength" ? integer(v, 1, 1000) : key === "ttsEnabled" ? typeof v === "boolean" : v === null || (typeof v === "string" && v.length <= 100);
+        const valid = key === "volume" ? number(v, 0, 1) : integer(v, 1, 200);
         if (!valid) return null;
         Object.assign(result, { [key]: v });
       }
@@ -45,9 +45,7 @@ export function parseMessage(raw: unknown, projectId: string): Message | null {
         if (!["http:", "https:", "blob:"].includes(url.protocol)) return null;
         if (a.volume !== undefined && !number(a.volume, 0, 1)) return null;
         action.url = a.url; action.volume = a.volume as number | undefined;
-      } else if (a.type === "tts") {
-        if (typeof a.text !== "string" || !a.text.length || a.text.length > 1000 || (a.rate !== undefined && !number(a.rate, .5, 2))) return null;
-        action.text = a.text; action.rate = a.rate as number | undefined;
+
       } else if (!["wait", "confetti", "stop", "clear"].includes(a.type)) return null;
       actions.push(action);
     }
@@ -101,7 +99,6 @@ export class OverlayRuntime {
         if (action.type === "clear") this.pending = [];
         this.active = null; continue;
       }
-      if (action.type === "tts" && !this.settings.ttsEnabled) continue;
       const controller = new AbortController(); this.controller = controller;
       const key = ++this.serial;
       const done = () => { if (!controller.signal.aborted && key === this.serial) this.advance(); };

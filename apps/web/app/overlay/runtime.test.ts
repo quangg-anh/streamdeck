@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultSettings, OverlayRuntime, parseMessage, type Frame, type Run } from "./runtime";
-import { playMedia, speak } from "./playback";
+import { playMedia } from "./playback";
 
 const run = (runId: string, durationMs = 1000): Run => ({ runId, actions: [{ type: "image", url: `/${runId}.png`, durationMs }] });
 function setup() {
@@ -47,9 +47,9 @@ describe("overlay queue", () => {
     first.done(); expect(s.frame()).toBe(second);
     second.done(); expect(s.frame()).toBeNull();
   });
-  it("wait cancels immediately, action controls match external controls, disabled TTS skips", () => {
-    const s = setup(); s.runtime.update({ ttsEnabled: false });
-    s.runtime.enqueue({ runId: "a", actions: [{ type: "tts", text: "skip", durationMs: 1000 }, { type: "wait", durationMs: 5000 }, { type: "stop", durationMs: 0 }] }, "QUEUE");
+  it("wait cancels immediately, action controls match external controls", () => {
+    const s = setup();
+    s.runtime.enqueue({ runId: "a", actions: [{ type: "wait", durationMs: 5000 }, { type: "stop", durationMs: 0 }] }, "QUEUE");
     expect(s.frame()).toBeNull();
     s.runtime.enqueue(run("pending"), "QUEUE"); vi.advanceTimersByTime(5000);
     expect(s.frame()?.action.url).toBe("/pending.png");
@@ -63,7 +63,7 @@ describe("inbound validation", () => {
   const message = { kind: "effect", projectId: "p", effectId: "e", mode: "QUEUE", ...run("a") };
   it("accepts valid protocol actions and settings extension", () => {
     expect(parseMessage(JSON.stringify(message), "p")?.kind).toBe("effect");
-    expect(parseMessage(JSON.stringify({ kind: "settings", settings: { volume: .3, ttsVoice: null, queueLimit: 3, developerMode: true } }), "p")).toEqual({ kind: "settings", settings: { volume: .3, ttsVoice: null, queueLimit: 3 } });
+    expect(parseMessage(JSON.stringify({ kind: "settings", settings: { volume: .3, queueLimit: 3, developerMode: true } }), "p")).toEqual({ kind: "settings", settings: { volume: .3, queueLimit: 3 } });
   });
   it("rejects malformed, cross-project and unsafe payloads without throwing", () => {
     for (const raw of ["{", "null", "[]", JSON.stringify({ ...message, projectId: "other" }), JSON.stringify({ ...message, mode: "bad" }), JSON.stringify({ ...message, actions: [{ type: "image", durationMs: 100, url: "javascript:alert(1)" }] }), JSON.stringify({ ...message, actions: [{ type: "wait", durationMs: -1 }] }), JSON.stringify({ kind: "settings", settings: { queueLimit: 201 } }), JSON.stringify({ kind: "control", projectId: "p", command: "bad" })]) expect(parseMessage(raw, "p")).toBeNull();
@@ -91,22 +91,5 @@ describe("playback lifecycle", () => {
     playMedia(media as unknown as HTMLMediaElement, s.frame()!, defaultSettings);
     s.runtime.enqueue(run("new"), "REPLACE"); await Promise.resolve();
     expect(s.frame()?.action.url).toBe("/new.png"); s.runtime.dispose();
-  });
-  it("TTS detects missing API, applies settings, handles end and cancels", () => {
-    const s = setup();
-    const tts: Run = { runId: "t", actions: [{ type: "tts", text: "hello world", durationMs: 1000 }] };
-    s.runtime.enqueue(tts, "QUEUE"); speak(s.frame()!, defaultSettings); expect(s.frame()).toBeNull();
-    class Utterance { constructor(public text: string) {} onend: (() => void) | null = null; onerror: (() => void) | null = null; }
-    const voice = { name: "Test", voiceURI: "test" };
-    const synthesis = { getVoices: () => [voice], speak: vi.fn(), cancel: vi.fn() };
-    s.runtime.enqueue(tts, "QUEUE");
-    speak(s.frame()!, { ...defaultSettings, ttsVoice: "test", ttsRate: 1.5, ttsMaxLength: 5, volume: .2 }, synthesis as unknown as SpeechSynthesis, Utterance as unknown as typeof SpeechSynthesisUtterance);
-    const utterance = synthesis.speak.mock.calls[0][0];
-    expect(utterance).toMatchObject({ text: "hello", voice, rate: 1.5, volume: .2 });
-    utterance.onend(); expect(s.frame()).toBeNull(); expect(synthesis.cancel).toHaveBeenCalledOnce();
-    expect(utterance.onend).toBeNull();
-    s.runtime.enqueue(tts, "QUEUE");
-    speak(s.frame()!, defaultSettings, synthesis as unknown as SpeechSynthesis, Utterance as unknown as typeof SpeechSynthesisUtterance);
-    s.runtime.control("clear"); expect(synthesis.cancel).toHaveBeenCalledTimes(2);
   });
 });

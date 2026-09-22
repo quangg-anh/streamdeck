@@ -15,7 +15,7 @@ import { createCooldowns, type Cooldown } from "./cooldown.js";
 import { allowedOrigin, referencesAsset } from "./local-security.js";
 import { LocalStorageProvider } from "./storage.js";
 import { clearLoginFailures, createSession, destroySession, hashPassword, loginRateLimited, recordLoginFailure, requestKey, requireAdmin, requireUser, resolveSession, sessionCookie, setSessionCookie, clearSessionCookie, startAuthMaintenance, verifyPassword, type SessionUser } from "./auth.js";
-import { buttonInput, buttonPatch, childParams, controlInput, effectInput, effectPatch, eventInput, fireParams, idParams, loginInput, passwordInput, projectGrantInput, projectInput, projectPatch, settingsPatch, triggerInput, triggerPatch, userCreateInput, userPatchInput } from "./schemas.js";
+import { buttonInput, buttonPatch, childParams, controlInput, effectInput, effectPatch, fireParams, idParams, loginInput, passwordInput, projectGrantInput, projectInput, projectPatch, settingsPatch, userCreateInput, userPatchInput } from "./schemas.js";
 
 export async function buildApp() {
 const app = Fastify({ logger: true, trustProxy: process.env.STREAMFX_TRUST_PROXY === "1" });
@@ -43,7 +43,7 @@ const stopAuthMaintenance = startAuthMaintenance();
 app.addHook("preClose", async () => { realtime.close(); });
 app.addHook("onClose", async () => { stopAuthMaintenance(); cooldowns.close(); await prisma.$disconnect(); });
 const assetDto = <T extends { path: string }>(asset: T) => { const { path: storedPath, ...dto } = asset; return { ...dto, url: storage.publicUrl(storedPath) }; };
-const settingsDto = (settings: unknown) => overlaySettingsSchema.parse(settings ?? { volume: 0.8, ttsEnabled: true, ttsVoice: null, ttsRate: 1, ttsMaxLength: 280, queueLimit: 50 });
+const settingsDto = (settings: unknown) => overlaySettingsSchema.parse(settings ?? { volume: 0.8, queueLimit: 50 });
 
 // Plan helpers: a user's deck quota and plan expiry gate project creation and firing.
 const planActive = (user: { role: string; blocked: boolean; planExpiresAt: Date | null }) => user.role === "ADMIN" || (!user.blocked && (!user.planExpiresAt || user.planExpiresAt.getTime() > Date.now()));
@@ -224,7 +224,7 @@ app.post("/api/projects/:id/rotate-token", async (req, reply) => {
 app.get("/api/projects/:id", async (req, reply) => {
   const user = await requireUser(req, reply); if (!user) return;
   const params = parse(idParams, req.params, reply); if (!params) return;
-  const project = await prisma.project.findFirst({ where: { id: params.id, ...(user.role === "ADMIN" ? {} : { userId: user.id }) }, include: { effects: true, buttons: { orderBy: { position: "asc" } }, triggers: true, assets: true, settings: true } });
+  const project = await prisma.project.findFirst({ where: { id: params.id, ...(user.role === "ADMIN" ? {} : { userId: user.id }) }, include: { effects: true, buttons: { orderBy: { position: "asc" } }, assets: true, settings: true } });
   return project ? { ...project, assets: project.assets.map(assetDto) } : notFound(reply);
 });
 app.patch("/api/projects/:id", async (req, reply) => {
@@ -291,26 +291,6 @@ app.delete("/api/projects/:id/buttons/:childId", async (req, reply) => {
   await prisma.deckButton.delete({ where: { id: params.childId } }); return reply.code(204).send(null);
 });
 
-app.post("/api/projects/:id/triggers", async (req, reply) => {
-  const user = await requireUser(req, reply); if (!user) return;
-  const params = parse(idParams, req.params, reply), body = parse(triggerInput, req.body, reply); if (!params || !body) return;
-  if (!(await ownedProject(params.id, user)) || !(await ensureEffect(params.id, body.effectId))) return notFound(reply);
-  return prisma.trigger.create({ data: { ...body, match: body.match ?? null, config: body.config as Prisma.InputJsonValue | undefined, projectId: params.id } });
-});
-app.patch("/api/projects/:id/triggers/:childId", async (req, reply) => {
-  const user = await requireUser(req, reply); if (!user) return;
-  const params = parse(childParams, req.params, reply), body = parse(triggerPatch, req.body, reply); if (!params || !body) return;
-  const item = await prisma.trigger.findFirst({ where: { id: params.childId, projectId: params.id, project: user.role === "ADMIN" ? undefined : { userId: user.id } } });
-  if (!item || (body.effectId && !(await ensureEffect(params.id, body.effectId)))) return notFound(reply);
-  return prisma.trigger.update({ where: { id: params.childId }, data: { ...body, config: body.config as Prisma.InputJsonValue | undefined } });
-});
-app.delete("/api/projects/:id/triggers/:childId", async (req, reply) => {
-  const user = await requireUser(req, reply); if (!user) return;
-  const params = parse(childParams, req.params, reply); if (!params) return;
-  const item = await prisma.trigger.findFirst({ where: { id: params.childId, projectId: params.id, project: user.role === "ADMIN" ? undefined : { userId: user.id } } }); if (!item) return notFound(reply);
-  await prisma.trigger.delete({ where: { id: params.childId } }); return reply.code(204).send(null);
-});
-
 app.patch("/api/projects/:id/settings", async (req, reply) => {
   const user = await requireUser(req, reply); if (!user) return;
   const params = parse(idParams, req.params, reply), body = parse(settingsPatch, req.body, reply); if (!params || !body) return;
@@ -331,17 +311,6 @@ app.post("/api/projects/:id/control", async (req, reply) => {
   const body = parse(controlInput, req.body, reply); if (!body) return;
   if (!(await ownedProject(params.id, user))) return notFound(reply);
   broadcast(params.id, { kind: "control", projectId: params.id, command: body.type }); return { ok: true };
-});
-app.post("/api/projects/:id/events", async (req, reply) => {
-  const user = await requireUser(req, reply); if (!user) return;
-  const params = parse(idParams, req.params, reply), body = parse(eventInput, req.body, reply); if (!params || !body) return;
-  const project = await prisma.project.findFirst({ where: { id: params.id, ...(user.role === "ADMIN" ? {} : { userId: user.id }) }, include: { settings: true } }); if (!project) return notFound(reply);
-  if (body.provider === "mock" && !project.settings?.allowMockEvents) return reply.code(403).send({ error: "Mock events disabled" });
-  if (body.provider === "tiktok") return reply.code(501).send({ error: "TikTok provider not configured" });
-  const triggers = await prisma.trigger.findMany({ where: { projectId: params.id, provider: body.provider, event: body.type, enabled: true } });
-  let fired = 0;
-  for (const trigger of triggers) if ((!trigger.match || trigger.match === body.value) && await fireEffect(params.id, trigger.effectId, { key: `trigger:${trigger.id}`, durationMs: trigger.cooldownMs })) fired++;
-  return { fired };
 });
 app.post("/api/projects/:id/assets", async (req, reply) => {
   const user = await requireUser(req, reply); if (!user) return;
