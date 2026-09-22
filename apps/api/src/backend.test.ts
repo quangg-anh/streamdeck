@@ -176,7 +176,7 @@ describe("API with mocked DB", () => {
     db.user.findUnique.mockResolvedValueOnce({ blocked: false, deckLimit: 3, planExpiresAt: null, _count: { projects: 1 } });
     db.project.create.mockResolvedValueOnce({ id: "p2", name: "x", description: "" });
     expect((await create({ name: "x" })).statusCode).toBe(200);
-    expect(db.project.create).toHaveBeenCalledWith({ data: { name: "x", description: "", userId: "u1", settings: { create: {} } } });
+    expect(db.project.create).toHaveBeenCalledWith({ data: { name: "x", description: "", userId: "u1", overlayToken: expect.any(String), settings: { create: {} } } });
   });
   it("admin lists and views user decks, and creates no-plan accounts", async () => {
     // Admin session alongside the default user session.

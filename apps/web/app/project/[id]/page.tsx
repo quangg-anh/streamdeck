@@ -46,6 +46,14 @@ export default function Studio({ params }: { params: Promise<{ id: string }> }) 
   async function clearQueue() { if (!await confirm({ title: "Xóa hàng đợi", danger: true, confirmLabel: "Xóa tất cả", message: "Xóa toàn bộ hiệu ứng đang phát và hàng đợi trên overlay?" })) return; void perform(() => request(`${base}/control`, "POST", { type: "clear" }), "Đã gửi lệnh xóa toàn bộ.", false); }
   async function stopCurrent() { void perform(() => request(`${base}/control`, "POST", { type: "stop" }), "Đã gửi lệnh dừng hiện tại.", false); }
   async function copyText(value: string, note: string) { try { await navigator.clipboard.writeText(value); push("success", note); } catch { push("error", "Không sao chép được. Hãy chọn và copy thủ công."); } }
+  async function rotateToken() {
+    if (!await confirm({ title: "Đổi token overlay", message: <>Token mới sẽ vô hiệu hóa URL overlay cũ trong OBS. Bạn cần cập nhật Browser Source với URL mới. Tiếp tục?</>, confirmLabel: "Đổi token" })) return;
+    void perform(async () => {
+      const result = await request<{ overlayToken: string }>(`${base}/rotate-token`, "POST");
+      setOverlayUrl(`${window.location.origin}/overlay/${encodeURIComponent(id)}?token=${encodeURIComponent(result.overlayToken)}`);
+      push("success", "Đã đổi token overlay. Cập nhật URL mới trong OBS.");
+    }, "", true);
+  }
   async function confirmDeleteProject() {
     if (deleteName !== data?.name) { setError("Tên xác nhận không khớp. Chưa xóa dự án."); return; }
     if (!await confirm({ title: "Xóa dự án", danger: true, confirmLabel: "Xóa vĩnh viễn", message: <>Xóa <strong>{data?.name}</strong> cùng toàn bộ hiệu ứng, nút và trigger? Không thể hoàn tác.</> })) return;
@@ -69,7 +77,7 @@ export default function Studio({ params }: { params: Promise<{ id: string }> }) 
     <Notice error={error} status="" />
     {!data ? <section className="panel"><Empty icon={loading ? "refresh" : "alert"}>{loading ? "Đang tải studio…" : "Không mở được dự án. Dự án có thể đã bị xóa hoặc API chưa sẵn sàng."}</Empty><button disabled={busy || loading} onClick={() => void perform(load, "Đã tải dự án.", false)}><Icon name="refresh" />Thử lại</button></section> : <>
       <section className="studio-heading"><div><p className="eyebrow">PHÒNG ĐIỀU KHIỂN / LOCAL OBS</p><h1>{data.name}</h1><p className="muted">{data.description || "Sẵn sàng cho khoảnh khắc tiếp theo."}</p></div><button className="ghost" disabled={busy} onClick={() => void reload()}><Icon name="refresh" />Tải lại dữ liệu</button></section>
-      <section className="obs-strip"><div><strong>Kết nối OBS</strong><p>Thêm Browser Source · 1920 × 1080 · dán URL này. Overlay dùng token riêng, không ai truy cập được nếu không có URL đầy đủ.</p><input aria-label="URL overlay cho OBS" readOnly value={overlayUrl} onFocus={event => event.target.select()} /></div><div className="actions"><button className="ghost" disabled={busy} onClick={() => void copyText(overlayUrl, "Đã sao chép URL overlay.")}><Icon name="copy" />Sao chép URL</button><a className="button-link" href={`/overlay/${encodeURIComponent(id)}?token=${encodeURIComponent(data.overlayToken)}`} target="_blank" rel="noreferrer"><Icon name="external" />Mở overlay</a></div></section>
+      <section className="obs-strip"><div><strong>Kết nối OBS</strong><p>Thêm Browser Source · 1920 × 1080 · dán URL này. Overlay dùng token riêng, không ai truy cập được nếu không có URL đầy đủ.</p><input aria-label="URL overlay cho OBS" readOnly value={overlayUrl} onFocus={event => event.target.select()} /></div><div className="actions"><button className="ghost" disabled={busy} onClick={() => void copyText(overlayUrl, "Đã sao chép URL overlay.")}><Icon name="copy" />Sao chép URL</button><button className="ghost" disabled={busy} onClick={() => void rotateToken()}><Icon name="refresh" />Đổi token</button><a className="button-link" href={`/overlay/${encodeURIComponent(id)}?token=${encodeURIComponent(data.overlayToken)}`} target="_blank" rel="noreferrer"><Icon name="external" />Mở overlay</a></div></section>
       <div className="tabbar" role="tablist" aria-label="Khu vực studio">{tabs.map(([value, label, icon]) => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "active" : "ghost"} disabled={busy} onClick={() => void switchTab(value)}><Icon name={icon} />{label}</button>)}</div>
       <fieldset className="workspace" disabled={busy} aria-busy={busy}>
       {tab === "effects" && <><header className="section-head"><div><h2>Hiệu ứng</h2><p className="muted">Xây chuỗi hành động. Lưu trước khi phát thử.</p></div><button disabled={editor !== null} onClick={() => setEditor("new")}><Icon name="plus" />Hiệu ứng</button></header>

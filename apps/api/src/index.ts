@@ -5,7 +5,7 @@ import websocket from "@fastify/websocket";
 import multipart from "@fastify/multipart";
 import staticFiles from "@fastify/static";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { RawData } from "ws";
 import { Prisma } from "@prisma/client";
 import { clientMessageSchema, effectActionSchema, overlaySettingsSchema, type EffectAction, type QueueMode } from "@streamfx/protocol";
@@ -18,7 +18,7 @@ import { clearLoginFailures, createSession, destroySession, hashPassword, loginR
 import { buttonInput, buttonPatch, childParams, controlInput, effectInput, effectPatch, eventInput, fireParams, idParams, loginInput, passwordInput, projectGrantInput, projectInput, projectPatch, settingsPatch, triggerInput, triggerPatch, userCreateInput, userPatchInput } from "./schemas.js";
 
 export async function buildApp() {
-const app = Fastify({ logger: true });
+const app = Fastify({ logger: true, trustProxy: process.env.STREAMFX_TRUST_PROXY === "1" });
 await app.register(cookie);
 // Resolve the session cookie into request.user for every request.
 app.addHook("preHandler", async request => { request.user = (await resolveSession(request.cookies[sessionCookie])) ?? undefined; });
@@ -66,6 +66,8 @@ const resolveActions = (actions: unknown): EffectAction[] => {
   const result = effectActionSchema.array().safeParse(actions);
   return result.success ? result.data : [];
 };
+// Overlay tokens are bearer credentials: use 192-bit random tokens instead of cuids.
+const newOverlayToken = () => randomBytes(24).toString("base64url");
 const fireEffect = async (projectId: string, effectId: string, source?: Cooldown) => {
   const effect = await ownedEffect(projectId, effectId);
   if (!effect || !effect.enabled) return false;
@@ -209,7 +211,15 @@ app.post("/api/projects", async (request, reply) => {
     if (account.planExpiresAt && account.planExpiresAt.getTime() <= Date.now()) return reply.code(402).send({ error: "Gói stream deck đã hết hạn. Liên hệ admin để gia hạn." });
     if (account._count.projects >= account.deckLimit) return reply.code(402).send({ error: `Đã đạt giới hạn ${account.deckLimit} stream deck. Liên hệ admin để nâng cấp.` });
   }
-  return prisma.project.create({ data: { ...body, userId: user.id, settings: { create: {} } } });
+  return prisma.project.create({ data: { ...body, userId: user.id, overlayToken: newOverlayToken(), settings: { create: {} } } });
+});
+app.post("/api/projects/:id/rotate-token", async (req, reply) => {
+  const user = await requireUser(req, reply); if (!user) return;
+  const params = parse(idParams, req.params, reply); if (!params) return;
+  const project = await ownedProject(params.id, user); if (!project) return notFound(reply);
+  const overlayToken = newOverlayToken();
+  await prisma.project.update({ where: { id: project.id }, data: { overlayToken } });
+  return { overlayToken };
 });
 app.get("/api/projects/:id", async (req, reply) => {
   const user = await requireUser(req, reply); if (!user) return;

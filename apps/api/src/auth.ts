@@ -106,7 +106,13 @@ export function startAuthMaintenance(): () => void {
 }
 
 export function requestKey(request: FastifyRequest): string {
-  return `${request.ip}`;
+  // Behind Cloudflare Tunnel / proxy, request.ip collapses to the proxy address —
+  // prefer the real client IP so login rate limiting stays per-user.
+  const cfIp = request.headers["cf-connecting-ip"];
+  if (typeof cfIp === "string" && cfIp) return cfIp;
+  const forwarded = request.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded) return forwarded.split(",")[0]!.trim();
+  return request.ip;
 }
 
 export async function requireUser(request: FastifyRequest, reply: FastifyReply): Promise<SessionUser | null> {
