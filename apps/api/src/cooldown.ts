@@ -1,23 +1,24 @@
-import Redis from "ioredis";
+import { Prisma } from "@prisma/client";
+import { prisma } from "./db.js";
 
 export type Cooldown = { key: string; durationMs: number };
-const claimScript = `
-for i, key in ipairs(KEYS) do
-  if redis.call('EXISTS', key) == 1 then return 0 end
-end
-for i, key in ipairs(KEYS) do
-  redis.call('SET', key, '1', 'PX', ARGV[i])
-end
-return 1`;
+
+// PostgreSQL-backed cooldown claims. A group claims all keys or none:
+// the transaction rolls back on any active key, and concurrent claims
+// on the same key resolve via the primary key (unique violation => loser
+// rolls back having consumed nothing), matching the old Redis Lua semantics.
+// Store failures fail closed: we never silently fall back to memory because
+// switching stores can bypass existing cooldowns.
 
 export function createCooldowns() {
-  const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 1 }) : null;
-  // Redis failures fail closed: switching stores can bypass existing cooldowns.
-  redis?.on("error", () => {});
-  const memory = new Map<string, number>();
-  const sweep = () => { const now = Date.now(); for (const [key, expiry] of memory) if (expiry <= now) memory.delete(key); };
-  const timer = setInterval(sweep, 30_000);
-  timer.unref();
+  const memory = process.env.COOLDOWN_STORE === "memory";
+  const store = new Map<string, number>();
+  const sweepMemory = () => { const now = Date.now(); for (const [key, expiry] of store) if (expiry <= now) store.delete(key); };
+  // The database sweep is opportunistic garbage collection; expiry itself is
+  // enforced per claim, so a missed sweep only costs disk space, never correctness.
+  const sweep = memory
+    ? (() => { const timer = setInterval(sweepMemory, 30_000); timer.unref(); return timer; })()
+    : (() => { const timer = setInterval(() => { void prisma.cooldown.deleteMany({ where: { expiresAt: { lte: new Date() } } }).catch(() => {}); }, 60_000); timer.unref(); return timer; })();
   return {
     async claim(items: Cooldown[]) {
       const grouped = new Map<string, number>();
@@ -26,13 +27,30 @@ export function createCooldowns() {
         if (durationMs > 0) grouped.set(key, Math.max(grouped.get(key) ?? 0, durationMs));
       }
       if (!grouped.size) return true;
-      if (redis) return Number(await redis.eval(claimScript, grouped.size, ...grouped.keys(), ...grouped.values())) === 1;
-      sweep();
-      const now = Date.now();
-      for (const key of grouped.keys()) if ((memory.get(key) ?? 0) > now) return false;
-      for (const [key, duration] of grouped) memory.set(key, now + duration);
-      return true;
+      if (memory) {
+        sweepMemory();
+        const now = Date.now();
+        for (const key of grouped.keys()) if ((store.get(key) ?? 0) > now) return false;
+        for (const [key, duration] of grouped) store.set(key, now + duration);
+        return true;
+      }
+      // Sorted keys keep concurrent multi-key claims locking in a consistent
+      // order, which prevents deadlocks between overlapping groups.
+      const entries = [...grouped.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      const keys = entries.map(([key]) => key);
+      try {
+        return await prisma.$transaction(async tx => {
+          await tx.cooldown.deleteMany({ where: { key: { in: keys }, expiresAt: { lte: new Date() } } });
+          if (await tx.cooldown.findFirst({ where: { key: { in: keys } }, select: { key: true } })) return false;
+          await tx.cooldown.createMany({ data: entries.map(([key, duration]) => ({ key, expiresAt: new Date(Date.now() + duration) })) });
+          return true;
+        });
+      } catch (error) {
+        // Concurrent winner already inserted one of our keys: we lost the race cleanly.
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return false;
+        throw error;
+      }
     },
-    close() { clearInterval(timer); memory.clear(); redis?.disconnect(); }
+    close() { clearInterval(sweep); store.clear(); }
   };
 }

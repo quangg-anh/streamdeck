@@ -1,7 +1,10 @@
 {
   "name": "streamfx",
   "private": true,
-  "engines": { "node": ">=22.14.0", "npm": ">=10" },
+  "engines": {
+    "node": ">=22.14.0",
+    "npm": ">=10"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -28,5 +31,8 @@
   },
   "devDependencies": {
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.2"
   }
 }

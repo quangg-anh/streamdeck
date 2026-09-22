@@ -14,25 +14,46 @@ enum QueueMode {
 }
 
 model User {
-  id       String    @id
-  projects Project[]
+  id             String    @id @default(cuid())
+  username       String    @unique
+  passwordHash   String
+  role           String    @default("USER")
+  blocked        Boolean   @default(false)
+  deckLimit      Int       @default(1)
+  planExpiresAt  DateTime?
+  projects       Project[]
+  sessions       Session[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 model Project {
-  id          String       @id @default(cuid())
-  name        String
-  description String       @default("")
-  userId      String
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  effects     Effect[]
-  buttons     DeckButton[]
-  triggers    Trigger[]
-  assets      Asset[]
-  settings    Settings?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-}
+  id           String       @id @default(cuid())
+  name         String
+  description  String       @default("")
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  overlayToken String       @unique @default(cuid())
+  effects      Effect[]
+  buttons      DeckButton[]
+  triggers     Trigger[]
+  assets       Asset[]
+  settings     Settings?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
+  @@index([userId])
+}
 model Effect {
   id         String       @id @default(cuid())
   projectId  String
@@ -99,4 +120,11 @@ model Settings {
   queueLimit      Int     @default(50)
   developerMode   Boolean @default(false)
   allowMockEvents Boolean @default(true)
+  userToken       String  @unique @default(cuid())
+}
+
+// Atomic cooldown claims; expired rows are re-claimed via delete + create in one transaction.
+model Cooldown {
+  key       String   @id
+  expiresAt DateTime
 }

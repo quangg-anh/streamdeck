@@ -24,6 +24,7 @@ export default function Overlay({ params }: { params: Promise<{ id: string }> })
   const { id } = use(params);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [settings, setSettings] = useState<OverlaySettings>(defaultSettings);
+  const token = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("token") ?? undefined : undefined;
   useEffect(() => {
     let closed = false;
     let ws: WebSocket | null = null;
@@ -52,7 +53,7 @@ export default function Overlay({ params }: { params: Promise<{ id: string }> })
       socket.onopen = () => {
         if (closed || ws !== socket) return;
         retry = 500; arm();
-        socket.send(JSON.stringify({ kind: "subscribe", projectId: id, client: "overlay" }));
+        socket.send(JSON.stringify({ kind: "subscribe", projectId: id, client: "overlay", token }));
       };
       socket.onmessage = event => {
         if (closed || ws !== socket) return;

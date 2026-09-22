@@ -2,13 +2,13 @@
 
 Studio điều khiển hiệu ứng livestream: project, effect, nút Stream Deck, trigger mock, upload media, browser overlay và TTS.
 
-**Không có xác thực người dùng. Chỉ dùng trên máy cá nhân đáng tin cậy. Không mở port ra LAN/Internet, không dùng tunnel hoặc reverse proxy công khai.** `DEV_USER_ID` chỉ phân vùng dữ liệu, không phải đăng nhập. CORS không thay thế xác thực. Các tiến trình khác trên máy vẫn có thể gọi API.
+**Đăng nhập bắt buộc.** Một cổng login chung cho admin và user tại `/login`. User không thể tự đăng ký — admin tạo tài khoản và cấp gói (số stream deck + thời hạn) qua Admin Panel. Cookie session hết hạn sau 7 ngày. **Không mở port ra LAN/Internet, không dùng tunnel hoặc reverse proxy công khai.** CORS không thay thế xác thực. Các tiến trình khác trên máy vẫn có thể gọi API nếu có cookie.
 
 ## Yêu cầu
 
 - Node.js **>=22.14.0**, khuyến nghị Node 22 LTS bản vá mới nhất; npm >=10.
-- PostgreSQL 16 local. Redis 7 tùy chọn cho cooldown.
-- Docker Desktop chỉ cần nếu chọn chạy PostgreSQL/Redis bằng Compose. **Máy thực hiện đóng gói hiện chưa cài Docker; chưa kiểm chứng Compose bằng runtime.**
+- PostgreSQL 16 local (cũng dùng cho cooldown và session).
+- Docker Desktop chỉ cần nếu chọn chạy PostgreSQL bằng Compose. **Máy thực hiện đóng gói hiện chưa cài Docker; chưa kiểm chứng Compose bằng runtime.**
 - npm là trình quản lý package duy nhất; commit `package-lock.json`, dùng `npm ci`. Không dùng pnpm.
 
 ## Cài đặt Windows (PowerShell)
@@ -27,7 +27,7 @@ Studio điều khiển hiệu ứng livestream: project, effect, nút Stream Dec
 	if (!(Test-Path .env)) { Copy-Item .env.example .env }
 	```
 
-	Sửa `DATABASE_URL` theo PostgreSQL của bạn. Mặc định ví dụ khớp Compose. Để `REDIS_URL=` trống nếu dùng cooldown trong bộ nhớ; đặt `redis://127.0.0.1:6379` nếu dùng Redis local. Server đọc `.env` ở gốc; biến môi trường có sẵn được ưu tiên. `UPLOAD_DIR` tương đối với gốc repository.
+	Sửa `DATABASE_URL` theo PostgreSQL của bạn. Mặc định ví dụ khớp Compose. Cooldown dùng PostgreSQL; đặt `COOLDOWN_STORE=memory` nếu muốn cooldown trong bộ nhớ (mất khi restart). Server đọc `.env` ở gốc; biến môi trường có sẵn được ưu tiên. `UPLOAD_DIR` tương đối với gốc repository.
 
 3. Chuẩn bị database. Nếu đã cài và chạy Docker Desktop:
 
@@ -35,9 +35,9 @@ Studio điều khiển hiệu ứng livestream: project, effect, nút Stream Dec
 	docker compose up -d --wait
 	```
 
-	Compose chỉ chạy PostgreSQL/Redis, không chạy ứng dụng. Port chỉ publish tại `127.0.0.1`. Nếu không có Docker, cài PostgreSQL local, tạo user/database rồi cập nhật `DATABASE_URL`; Redis không bắt buộc.
+	Compose chỉ chạy PostgreSQL, không chạy ứng dụng. Port chỉ publish tại `127.0.0.1`. Nếu không có Docker, cài PostgreSQL local, tạo user/database rồi cập nhật `DATABASE_URL`.
 
-4. Sinh Prisma Client và áp dụng migration. Seed dữ liệu mẫu là tùy chọn:
+4. Sinh Prisma Client, áp dụng migration và tạo tài khoản admin. Seed đọc `ADMIN_USERNAME`/`ADMIN_PASSWORD` từ `.env` (mặc định `admin`/`admin12345` — **đổi ngay sau lần đăng nhập đầu**):
 
 	```powershell
 	npm run prisma:generate
@@ -51,7 +51,7 @@ Studio điều khiển hiệu ứng livestream: project, effect, nút Stream Dec
 	npm run dev
 	```
 
-	Mở `http://127.0.0.1:3000`. Next.js, REST API, `/assets/` và `/ws` dùng chung server/port. Dừng bằng Ctrl+C. Dùng script gốc, không chạy Next riêng vì thiếu API/WebSocket. Package dùng chung được build trước dev; sau khi sửa package, chạy lại dev để build lại.
+	Mở `http://127.0.0.1:3000` — chuyển hướng tới `/login`. Đăng nhập bằng tài khoản admin để mở Admin Panel (quản lý user, cấp gói), hoặc tài khoản user để mở dashboard stream deck. Next.js, REST API, `/assets/` và `/ws` dùng chung server/port. Dừng bằng Ctrl+C. Dùng script gốc, không chạy Next riêng vì thiếu API/WebSocket. Package dùng chung được build trước dev; sau khi sửa package, chạy lại dev để build lại.
 
 6. Mở project trong studio; sao chép URL overlay vào OBS Browser Source trên **cùng máy**. Giữ overlay mở khi phát hiệu ứng. TTS/âm thanh phụ thuộc giọng hệ điều hành, hỗ trợ trình duyệt/OBS và chính sách autoplay; cần kiểm tra trực tiếp trên máy sử dụng.
 
@@ -71,23 +71,27 @@ Build theo thứ tự types → protocol → API → web. Package dùng chung xu
 
 ## Tính năng và giới hạn
 
+- **Auth & gói dịch vụ**: một cổng login `/login` cho admin và user. Admin Panel tạo/khóa/xóa user, cấp `deckLimit` (số stream deck) và `planDays` (HSD). User không tự đăng ký được. Quá quota hoặc hết hạn: không tạo deck mới (HTTP 402), vẫn xem được deck hiện có. Gia hạn cộng dồn vào HSD hiện tại.
 - Effect chứa các action tuần tự: `image`, `video`, `audio`, `tts`, `confetti`, `wait`, `clear`, `stop`; mode `QUEUE`, `REPLACE`, `DROP`.
-- Cooldown cho effect/button/trigger. Không dùng Redis: bộ nhớ riêng tiến trình, mất khi restart. Có Redis nhưng Redis lỗi: không tự chuyển sang bộ nhớ để tránh vượt cooldown.
+- Cooldown cho effect/button/trigger. Mặc định lưu PostgreSQL, giữ nguyên khi restart. `COOLDOWN_STORE=memory`: bộ nhớ riêng tiến trình, mất khi restart. PostgreSQL lỗi: không tự chuyển sang bộ nhớ để tránh vượt cooldown.
+- Overlay OBS truy cập bằng URL có token riêng (`overlayToken`) — không cần cookie session, dùng cho Browser Source.
 - CRUD project/effect/button/trigger, cài đặt overlay, điều khiển phát và sự kiện mock. TikTok chỉ là placeholder; event TikTok trả `501`, **không kết nối TikTok thật**.
 - Media lưu local trong `data/uploads`; giới hạn mặc định 10 MiB/file, kiểm tra MIME và dung lượng, lưu SHA-256. Chưa kiểm tra magic bytes, quét malware hoặc có adapter S3/R2.
 - WebSocket phục vụ overlay đang kết nối; không có hàng đợi bền vững/replay hiệu ứng sau mất kết nối. Không triển khai đa instance.
-- Sao lưu cả PostgreSQL lẫn thư mục upload. Không commit `.env`, upload hay dữ liệu riêng. Compose dùng mật khẩu mẫu local, không dùng cho môi trường công khai.
+- Sao lưu PostgreSQL và thư mục upload. Không commit `.env`, upload hay dữ liệu riêng. Compose dùng mật khẩu mẫu local, không dùng cho môi trường công khai.
 
 ## API chính
 
+- Auth: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `PATCH /api/auth/password`
+- Admin: `GET|POST /api/admin/users`, `PATCH|DELETE /api/admin/users/:id`
 - CRUD project: `/api/projects`, `/api/projects/:id`
 - Effect/button/trigger: `/api/projects/:id/effects`, `/api/projects/:id/buttons`, `/api/projects/:id/triggers` (item dùng `/:childId`)
 - Settings: `PATCH /api/projects/:id/settings`
 - Upload/delete: `/api/projects/:id/assets`
 - Phát effect: `POST /api/projects/:id/fire/:effectId`; nút: `POST /api/projects/:id/buttons/:childId/fire`
 - Điều khiển: `POST /api/projects/:id/control`; sự kiện: `POST /api/projects/:id/events`
-- Provider: `GET /api/providers`; WebSocket: `/ws`
-- `/health`: tiến trình sống; `/ready`: kiểm tra PostgreSQL, không kiểm tra Redis.
+- Provider: `GET /api/providers`; WebSocket: `/ws` (subscribe kèm `overlayToken`)
+- `/health`: tiến trình sống; `/ready`: kiểm tra PostgreSQL.
 
 ## Kiểm tra không khởi động server
 
@@ -98,6 +102,6 @@ npm run typecheck
 npm run build
 ```
 
-CI chạy `npm ci`, generate, test, typecheck, build trên Windows/Linux với Node 22.14.0 và URL database giả. Test hiện tại không thay thế kiểm thử PostgreSQL/Redis thật hoặc OBS. Không tự chạy migration hay server trong CI. Script `test:e2e` chỉ dành cho Playwright khi đã có bộ test/cấu hình phù hợp; không nằm trong kiểm chứng đóng gói này.
+CI chạy `npm ci`, generate, test, typecheck, build trên Windows/Linux với Node 22.14.0 và URL database giả. Test hiện tại không thay thế kiểm thử PostgreSQL thật hoặc OBS. Không tự chạy migration hay server trong CI. Script `test:e2e` chỉ dành cho Playwright khi đã có bộ test/cấu hình phù hợp; không nằm trong kiểm chứng đóng gói này.
 
 Nếu port 3000 bị chiếm, đổi `PORT` trong `.env`. Nếu `/ready` trả `503`, kiểm tra PostgreSQL và `DATABASE_URL`. Sau khi sửa dependency, dùng `npm install` để cập nhật lockfile rồi commit cả manifest và lockfile.
