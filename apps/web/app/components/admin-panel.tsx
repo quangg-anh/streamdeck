@@ -10,6 +10,20 @@ type UserProjects = { user: { id: string; username: string }; projects: AdminPro
 
 const fmtDate = (value: string | null) => value ? new Date(value).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }) : "—";
 const daysLeft = (value: string | null) => value ? Math.max(0, Math.ceil((new Date(value).getTime() - Date.now()) / 86400000)) : null;
+/* Expiry cue: red when expired/today, amber under 7 days, plain otherwise. */
+function expiryClass(value: string | null) {
+  const days = daysLeft(value);
+  if (days === null) return "";
+  if (days <= 0) return "expiry-critical";
+  if (days <= 7) return "expiry-warning";
+  return "";
+}
+function statusBadge(user: AdminUser) {
+  if (user.role === "ADMIN") return <span className="badge"><Icon name="settings" />Admin</span>;
+  if (user.blocked) return <span className="badge badge-muted"><Icon name="close" />Đã khóa</span>;
+  if (user.deckLimit === 0) return <span className="badge badge-muted"><Icon name="box" />Chưa có gói</span>;
+  return <span className="badge badge-ok"><Icon name="check" />Đang hoạt động</span>;
+}
 
 export function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -63,12 +77,33 @@ export function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => void }) {
         {viewing && <div className="panel editor"><header className="section-head"><div><h3>Stream deck của {viewing.user.username} <small>({viewing.projects.length})</small></h3></div><button type="button" className="ghost compact" onClick={() => setViewing(null)}><Icon name="close" />Đóng</button></header>
           {!viewing.projects.length ? <Empty icon="box">Người dùng này chưa có stream deck nào.</Empty> : <div className="resource-list">{viewing.projects.map(project => <article className="resource" key={project.id}><div><span className="badge">Tạo {fmtDate(project.createdAt)}</span><h3>{project.name}</h3><p>{project.description || "Chưa có mô tả"} · {project._count.effects} hiệu ứng · {project._count.buttons} nút</p></div><div className="actions"><a className="button-link ghost compact" href={`/project/${encodeURIComponent(project.id)}`}><Icon name="external" />Mở studio</a></div></article>)}</div>}
         </div>}
-        {!users.length ? <Empty icon="user">Chưa có người dùng nào.</Empty> : <div className="resource-list">{users.map(user => <article className="resource" key={user.id}>
-          <div><span className="badge">{user.role === "ADMIN" ? "Admin" : user.blocked ? "Đã khóa" : user.deckLimit === 0 ? "Chưa có gói" : "Đang hoạt động"}</span><h3>{user.username}</h3><p>{user.projectCount}/{user.deckLimit} deck · HSD: {fmtDate(user.planExpiresAt)}{daysLeft(user.planExpiresAt) !== null ? ` (còn ${daysLeft(user.planExpiresAt)} ngày)` : ""}</p></div>
-          <div className="actions"><button className="ghost compact" disabled={busy} onClick={() => { setEditing(null); void viewDecks(user); }}><Icon name="box" />Xem deck</button><button className="ghost compact" disabled={busy} onClick={() => { setViewing(null); setEditing(user); }}><Icon name="edit" />Sửa</button><button className="danger compact" disabled={busy || user.id === me.id} onClick={() => void removeUser(user)}><Icon name="trash" />Xóa</button></div>
-        </article>)}</div>}
+        {!users.length ? <Empty icon="user">Chưa có người dùng nào.</Empty> : <div className="resource-list">{users.map(user => {
+          const days = daysLeft(user.planExpiresAt);
+          const expiry = expiryClass(user.planExpiresAt);
+          return <article className="resource user-row" key={user.id}>
+          <div className="user-info">
+            {statusBadge(user)}
+            <h3>{user.username}</h3>
+            <p>
+              <span className="stat"><strong>{user.projectCount}</strong>/{user.deckLimit} deck</span>
+              <span className={`stat ${expiry}`}>HSD: {fmtDate(user.planExpiresAt)}{days !== null ? ` (còn ${days} ngày)` : ""}</span>
+            </p>
+          </div>
+          <div className="actions user-actions">
+            <button className="ghost compact" disabled={busy} onClick={() => { setEditing(null); void viewDecks(user); }}><Icon name="box" />Xem deck</button>
+            <button className="ghost compact" disabled={busy} onClick={() => { setViewing(null); setEditing(user); }}><Icon name="edit" />Sửa</button>
+            <button className="icon-danger" disabled={busy || user.id === me.id} aria-label={`Xóa ${user.username}`} title="Xóa tài khoản" onClick={() => void removeUser(user)}><Icon name="trash" /></button>
+          </div>
+        </article>;
+        })}</div>}
       </section>
-      <section className="panel create-panel"><p className="eyebrow">GÓI DỊCH VỤ</p><h2>Cách cấp gói</h2><p className="muted">Dùng <strong>Tạo tài khoản</strong> để tạo nhanh tài khoản chưa có gói (0 deck, không thời hạn) — cấp gói sau bằng nút Sửa khi khách mua. Hoặc dùng form đầy đủ để đặt ngay số deck và số ngày.</p><p className="muted">Khi gia hạn, số ngày được cộng vào HSD hiện tại. Người dùng chưa có gói hoặc hết hạn sẽ không tạo thêm deck nhưng vẫn xem được dự án hiện có.</p></section>
+      <details className="panel create-panel">
+        <summary><Icon name="info" /><span className="eyebrow">GÓI DỊCH VỤ</span><strong>Cách cấp gói</strong></summary>
+        <div className="panel-body">
+          <p className="muted">Dùng <strong>Tạo tài khoản</strong> để tạo nhanh tài khoản chưa có gói (0 deck, không thời hạn) — cấp gói sau bằng nút Sửa khi khách mua. Hoặc dùng form đầy đủ để đặt ngay số deck và số ngày.</p>
+          <p className="muted">Khi gia hạn, số ngày được cộng vào HSD hiện tại. Người dùng chưa có gói hoặc hết hạn sẽ không tạo thêm deck nhưng vẫn xem được dự án hiện có.</p>
+        </div>
+      </details>
     </div>
     <footer>StreamFX / Admin console</footer>
   </main>;
