@@ -25,8 +25,7 @@
     "prisma:push": "npm run prisma:push --workspace=@streamfx/api",
     "prisma:migrate": "npm run prisma:migrate --workspace=@streamfx/api",
     "prisma:migrate:dev": "npm run prisma:migrate:dev --workspace=@streamfx/api",
-    "prisma:seed": "npm run prisma:seed --workspace=@streamfx/api",
-    "db:export:sqlite": "tsx scripts/export-postgres-sqlite.ts"
+    "prisma:seed": "npm run prisma:seed --workspace=@streamfx/api"
   },
   "overrides": {
     "postcss": "^8.5.23"
