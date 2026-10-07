@@ -117,6 +117,10 @@ describe("storage", () => {
     await expect(storage.save(broken)).rejects.toThrow("interrupted");
     expect(await readdir(root)).toEqual([]);
     expect(validMagic("image/webp", Buffer.from("RIFF1234WEBP"))).toBe(true);
+    const quickTime = Buffer.alloc(12);
+    quickTime.writeUInt32BE(12, 0);
+    quickTime.write("ftyp", 4, "ascii");
+    expect(validMagic("video/quicktime", quickTime)).toBe(true);
     expect(validMagic("video/webm", Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))).toBe(false);
   });
 });

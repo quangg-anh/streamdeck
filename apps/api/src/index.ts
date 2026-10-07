@@ -18,14 +18,23 @@ import { clearLoginFailures, createSession, destroySession, hashPassword, loginR
 import { buttonInput, buttonPatch, childParams, controlInput, effectInput, effectPatch, fireParams, idParams, loginInput, passwordInput, projectGrantInput, projectInput, projectPatch, settingsPatch, userCreateInput, userPatchInput } from "./schemas.js";
 
 export async function buildApp() {
-const app = Fastify({ logger: true, trustProxy: process.env.STREAMFX_TRUST_PROXY === "1" });
+const production = process.argv.includes("--production");
+const app = Fastify({
+  logger: production || process.env.LOG_FORMAT === "json" ? true : {
+    transport: {
+      target: "pino-pretty",
+      options: { colorize: true, translateTime: "SYS:HH:MM:ss", ignore: "pid,hostname", singleLine: true }
+    }
+  },
+  trustProxy: process.env.STREAMFX_TRUST_PROXY === "1"
+});
 await app.register(cookie);
 // Resolve the session cookie into request.user for every request.
 app.addHook("preHandler", async request => { request.user = (await resolveSession(request.cookies[sessionCookie])) ?? undefined; });
 const uploadDir = path.resolve(process.cwd(), process.env.UPLOAD_DIR ?? "data/uploads");
 const storage = new LocalStorageProvider(uploadDir);
 const maxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES ?? 10485760);
-const allowedMime = new Set((process.env.ALLOWED_UPLOAD_TYPES ?? "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,audio/mpeg,audio/ogg,audio/wav").split(","));
+const allowedMime = new Set((process.env.ALLOWED_UPLOAD_TYPES ?? "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/ogg,audio/wav").split(","));
 await storage.init();
 const allowlist = (process.env.CORS_ORIGIN ?? "").split(",").map(value => value.trim()).filter(Boolean);
 app.addHook("onRequest", async (req, reply) => {

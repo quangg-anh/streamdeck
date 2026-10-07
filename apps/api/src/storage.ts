@@ -13,7 +13,7 @@ export interface StorageProvider {
 }
 
 export class InvalidMediaError extends Error { statusCode = 415; }
-export const mediaExtensions: Record<string, string> = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "video/mp4": ".mp4", "video/webm": ".webm", "audio/mpeg": ".mp3", "audio/ogg": ".ogg", "audio/wav": ".wav" };
+export const mediaExtensions: Record<string, string> = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp", "video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm", "audio/mpeg": ".mp3", "audio/ogg": ".ogg", "audio/wav": ".wav" };
 export function validMagic(mime: string, b: Buffer) {
   const text = (start: number, end: number) => b.toString("ascii", start, end);
   switch (mime) {
@@ -25,6 +25,7 @@ export function validMagic(mime: string, b: Buffer) {
     case "audio/ogg": return text(0, 4) === "OggS";
     case "audio/mpeg": return text(0, 3) === "ID3" || (b.length >= 4 && b[0] === 255 && (b[1]! & 0xe0) === 0xe0 && (b[1]! & 6) !== 0 && (b[2]! & 0xf0) !== 0xf0 && (b[2]! & 12) !== 12);
     case "video/mp4": return b.length >= 12 && b.readUInt32BE(0) >= 12 && text(4, 8) === "ftyp";
+    case "video/quicktime": return b.length >= 12 && b.readUInt32BE(0) >= 12 && text(4, 8) === "ftyp";
     case "video/webm": return b.length >= 4 && b.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) && b.includes(Buffer.from("webm"));
     default: return false;
   }
