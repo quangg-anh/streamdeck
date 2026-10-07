@@ -12,8 +12,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "prisma:generate": "dotenv -e ../../.env -- prisma generate",
-    "prisma:migrate": "dotenv -e ../../.env -- prisma migrate deploy",
-    "prisma:migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",
+    "prisma:push": "dotenv -e ../../.env -- prisma db push",
+    "prisma:migrate": "npm run prisma:push",
+    "prisma:migrate:dev": "npm run prisma:push",
     "prisma:seed": "dotenv -e ../../.env -- tsx prisma/seed.ts"
   },
   "dependencies": {

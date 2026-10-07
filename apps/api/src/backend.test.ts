@@ -54,7 +54,7 @@ describe("cooldowns", () => {
       expect(await claim()).toBe(true);
     } finally { store.close(); vi.useRealTimers(); vi.unstubAllEnvs(); }
   });
-  it("stores claims in PostgreSQL atomically and reports race losers", async () => {
+  it("stores claims in SQLite atomically and reports race losers", async () => {
     vi.stubEnv("COOLDOWN_STORE", "");
     const store = createCooldowns();
     const tx = { cooldown: { findFirst: db.cooldown.findFirst, deleteMany: db.cooldown.deleteMany, createMany: db.cooldown.createMany } };

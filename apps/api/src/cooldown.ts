@@ -3,7 +3,7 @@ import { prisma } from "./db.js";
 
 export type Cooldown = { key: string; durationMs: number };
 
-// PostgreSQL-backed cooldown claims. A group claims all keys or none:
+// SQLite-backed cooldown claims. A group claims all keys or none:
 // the transaction rolls back on any active key, and concurrent claims
 // on the same key resolve via the primary key (unique violation => loser
 // rolls back having consumed nothing), matching the old Redis Lua semantics.

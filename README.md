@@ -36,8 +36,8 @@ Bạn bấm nút ──► API trên máy ──► Overlay trong OBS ──► 
 |---|---|
 | Node.js | **≥ 22.14.0** (khuyến nghị Node 22 LTS bản vá mới nhất) |
 | npm | ≥ 10 — npm là package manager **duy nhất**, không dùng pnpm |
-| PostgreSQL | 16, chạy local |
-| Docker Desktop | Chỉ cần nếu chạy PostgreSQL bằng Compose |
+| SQLite | Embedded, lưu tại `data/streamfx.db` |
+| Node.js | Có sẵn SQLite embedded và JSON1 |
 
 ### Cài đặt (Windows / PowerShell)
 
@@ -63,31 +63,23 @@ Sau đó mở `.env` và sửa các giá trị chính:
 
 | Biến | Ý nghĩa |
 |---|---|
-| `DATABASE_URL` | Chuỗi kết nối PostgreSQL của bạn (ví dụ mặc định khớp Compose) |
-| `COOLDOWN_STORE` | Để trống = dùng PostgreSQL (cooldown giữ nguyên khi restart). Đặt `memory` = mất cooldown khi restart |
+| `DATABASE_URL` | `file:../../../data/streamfx.db` cho SQLite embedded |
+| `COOLDOWN_STORE` | Để trống = dùng SQLite (cooldown giữ nguyên khi restart). Đặt `memory` = mất cooldown khi restart |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Tài khoản admin tạo bởi seed (mặc định `admin` / `admin12345` — **đổi ngay sau lần đăng nhập đầu**) |
 | `PORT` | Cổng server, mặc định `3000` |
 | `UPLOAD_DIR` | Thư mục lưu media, mặc định `data/uploads` (tương đối với gốc repo) |
 
 > Server đọc `.env` ở gốc repo; biến môi trường có sẵn được ưu tiên.
 
-**Bước 3 — Khởi động PostgreSQL**
+**Bước 3 — Chuẩn bị SQLite**
 
-Nếu đã cài Docker Desktop:
-
-```powershell
-docker compose up -d --wait
-```
-
-Compose **chỉ chạy PostgreSQL**, không chạy ứng dụng; port chỉ publish tại `127.0.0.1`.
-
-Nếu không có Docker: cài PostgreSQL trực tiếp, tạo user/database rồi điền vào `DATABASE_URL`.
+Không cần cài hoặc khởi động database server. SQLite được tạo tại `data/streamfx.db`.
 
 **Bước 4 — Tạo database schema và tài khoản admin**
 
 ```powershell
 npm run prisma:generate   # Sinh Prisma Client
-npm run prisma:migrate    # Áp dụng migration
+npm run prisma:push      # Đồng bộ schema SQLite
 npm run prisma:seed       # Tạo admin (đọc ADMIN_USERNAME/ADMIN_PASSWORD từ .env)
 ```
 
@@ -151,9 +143,9 @@ Cấu hình host/port trong `.env`:
 **Cooldown**
 
 - Áp dụng cho effect/button/trigger.
-- Mặc định lưu PostgreSQL — giữ nguyên khi restart.
+- Mặc định lưu SQLite — giữ nguyên khi restart.
 - `COOLDOWN_STORE=memory`: lưu trong RAM của tiến trình, mất khi restart.
-- PostgreSQL lỗi: **không** tự chuyển sang memory (tránh vượt cooldown).
+- SQLite lỗi: **không** tự chuyển sang memory (tránh vượt cooldown).
 
 **Overlay & media**
 
@@ -182,7 +174,7 @@ Cấu hình host/port trong `.env`:
 | **Sự kiện mock** | `POST /api/projects/:id/events` |
 | **Provider** | `GET /api/providers` |
 | **WebSocket** | `/ws` (subscribe kèm `overlayToken`) |
-| **Sức khỏe** | `/health` (tiến trình sống) · `/ready` (kiểm tra PostgreSQL) |
+| **Sức khỏe** | `/health` (tiến trình sống) · `/ready` (kiểm tra SQLite) |
 
 ### Kiểm tra (không khởi động server)
 
@@ -193,8 +185,8 @@ npm run typecheck
 npm run build
 ```
 
-- CI chạy `npm ci` → generate → test → typecheck → build trên **Windows/Linux** với Node 22.14.0 và URL database giả.
-- Test **không** thay thế kiểm thử PostgreSQL thật hoặc OBS; CI không tự chạy migration hay server.
+- CI chạy `npm ci` → generate → test → typecheck → build trên **Windows/Linux** với Node 22.14.0.
+- Test **không** thay thế kiểm thử SQLite runtime hoặc OBS; CI không tự chạy schema push hay server.
 - `test:e2e` chỉ dành cho Playwright khi đã có bộ test phù hợp — không nằm trong kiểm chứng đóng gói.
 
 ### Xử lý sự cố
@@ -202,12 +194,12 @@ npm run build
 | Vấn đề | Cách xử lý |
 |---|---|
 | Port 3000 bị chiếm | Đổi `PORT` trong `.env` |
-| `/ready` trả `503` | Kiểm tra PostgreSQL đang chạy và `DATABASE_URL` |
+| `/ready` trả `503` | Kiểm tra file `data/streamfx.db` và `DATABASE_URL` |
 | Sửa dependency | Dùng `npm install` để cập nhật lockfile, commit cả `package.json` và `package-lock.json` |
 
 ### Sao lưu
 
-- Sao lưu định kỳ: PostgreSQL và thư mục `data/uploads`.
+- Sao lưu định kỳ: file `data/streamfx.db` và thư mục `data/uploads`.
 - **Không commit**: `.env`, thư mục upload, dữ liệu riêng.
 - Mật khẩu trong `docker-compose.yml` chỉ dùng local, không dùng cho môi trường công khai.
 
@@ -245,8 +237,8 @@ Button press ──► Local API ──► OBS overlay ──► Effect plays
 |---|---|
 | Node.js | **≥ 22.14.0** (latest Node 22 LTS patch recommended) |
 | npm | ≥ 10 — npm is the **only** package manager, no pnpm |
-| PostgreSQL | 16, running locally |
-| Docker Desktop | Only if you run PostgreSQL via Compose |
+| SQLite | Embedded, stored at `data/streamfx.db` |
+| Node.js | Provides embedded SQLite and JSON1 |
 
 ### Setup (Windows / PowerShell)
 
@@ -272,31 +264,23 @@ Then edit `.env` — the key values:
 
 | Variable | Meaning |
 |---|---|
-| `DATABASE_URL` | Your PostgreSQL connection string (default example matches Compose) |
-| `COOLDOWN_STORE` | Empty = PostgreSQL (cooldowns survive restarts). `memory` = lost on restart |
+| `DATABASE_URL` | `file:../../../data/streamfx.db` for embedded SQLite |
+| `COOLDOWN_STORE` | Empty = SQLite (cooldowns survive restarts). `memory` = lost on restart |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Admin account created by the seed (default `admin` / `admin12345` — **change it right after first login**) |
 | `PORT` | Server port, default `3000` |
 | `UPLOAD_DIR` | Media folder, default `data/uploads` (relative to repo root) |
 
 > The server reads `.env` from the repo root; pre-existing environment variables take priority.
 
-**Step 3 — Start PostgreSQL**
+**Step 3 — Prepare SQLite**
 
-If Docker Desktop is installed:
-
-```powershell
-docker compose up -d --wait
-```
-
-Compose **only runs PostgreSQL**, not the app; the port is published to `127.0.0.1` only.
-
-Without Docker: install PostgreSQL directly, create a user/database, then fill in `DATABASE_URL`.
+No database server needs to be installed or started. SQLite is created at `data/streamfx.db`.
 
 **Step 4 — Create the schema and admin account**
 
 ```powershell
 npm run prisma:generate   # Generate Prisma Client
-npm run prisma:migrate    # Apply migrations
+npm run prisma:push      # Synchronize the SQLite schema
 npm run prisma:seed       # Create admin (reads ADMIN_USERNAME/ADMIN_PASSWORD from .env)
 ```
 
@@ -360,9 +344,9 @@ Host/port config in `.env`:
 **Cooldown**
 
 - Applies to effects/buttons/triggers.
-- Default store is PostgreSQL — survives restarts.
+- Default store is SQLite — survives restarts.
 - `COOLDOWN_STORE=memory`: in-process memory, lost on restart.
-- If PostgreSQL fails: does **not** fall back to memory (to prevent bypassing cooldowns).
+- If SQLite fails: does **not** fall back to memory (to prevent bypassing cooldowns).
 
 **Overlay & media**
 
@@ -391,7 +375,7 @@ Host/port config in `.env`:
 | **Mock events** | `POST /api/projects/:id/events` |
 | **Providers** | `GET /api/providers` |
 | **WebSocket** | `/ws` (subscribe with `overlayToken`) |
-| **Health** | `/health` (process alive) · `/ready` (PostgreSQL check) |
+| **Health** | `/health` (process alive) · `/ready` (SQLite check) |
 
 ### Testing (no server started)
 
@@ -402,8 +386,8 @@ npm run typecheck
 npm run build
 ```
 
-- CI runs `npm ci` → generate → test → typecheck → build on **Windows/Linux** with Node 22.14.0 and a dummy database URL.
-- Tests do **not** replace real PostgreSQL or OBS verification; CI never runs migrations or a server.
+- CI runs `npm ci` → generate → test → typecheck → build on **Windows/Linux** with Node 22.14.0.
+- Tests do **not** replace SQLite runtime or OBS verification; CI never runs schema push or a server.
 - `test:e2e` is only for Playwright when a proper test suite exists — not part of this packaging verification.
 
 ### Troubleshooting
@@ -411,11 +395,11 @@ npm run build
 | Problem | Fix |
 |---|---|
 | Port 3000 in use | Change `PORT` in `.env` |
-| `/ready` returns `503` | Check PostgreSQL is running and `DATABASE_URL` |
+| `/ready` returns `503` | Check `data/streamfx.db` and `DATABASE_URL` |
 | Dependency changes | Use `npm install` to update the lockfile; commit both the manifest and the lockfile |
 
 ### Backups
 
-- Regularly back up: PostgreSQL and the `data/uploads` folder.
+- Regularly back up: `data/streamfx.db` and the `data/uploads` folder.
 - **Never commit**: `.env`, uploaded media, private data.
 - Passwords in `docker-compose.yml` are local-only samples, not for public environments.

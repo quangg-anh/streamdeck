@@ -11,5 +11,6 @@ test-results
 data/uploads/*
 !data/uploads/.gitkeep
 data/backups/*
+data/streamfx.db*
 *.log
 .agent-skills
