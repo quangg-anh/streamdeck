@@ -23,8 +23,7 @@
     "test:e2e": "npm run test:e2e --workspace=@streamfx/web",
     "prisma:generate": "npm run prisma:generate --workspace=@streamfx/api",
     "prisma:push": "npm run prisma:push --workspace=@streamfx/api",
-    "prisma:migrate": "npm run prisma:migrate --workspace=@streamfx/api",
-    "prisma:migrate:dev": "npm run prisma:migrate:dev --workspace=@streamfx/api",
+    "prisma:setup": "npm run prisma:setup --workspace=@streamfx/api",
     "prisma:seed": "npm run prisma:seed --workspace=@streamfx/api"
   },
   "overrides": {

@@ -13,8 +13,7 @@
     "test": "vitest run --passWithNoTests",
     "prisma:generate": "dotenv -e ../../.env -- prisma generate",
     "prisma:push": "dotenv -e ../../.env -- prisma db push",
-    "prisma:migrate": "npm run prisma:push",
-    "prisma:migrate:dev": "npm run prisma:push",
+    "prisma:setup": "npm run prisma:generate && npm run prisma:push",
     "prisma:seed": "dotenv -e ../../.env -- tsx prisma/seed.ts"
   },
   "dependencies": {
