@@ -10,5 +10,6 @@ playwright-report
 test-results
 data/uploads/*
 !data/uploads/.gitkeep
+data/backups/*
 *.log
 .agent-skills
