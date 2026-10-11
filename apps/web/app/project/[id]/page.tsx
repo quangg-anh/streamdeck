@@ -5,19 +5,23 @@ import EffectEditor, { assetUrl } from "../../components/effect-editor";
 import { Brand, Check, Empty, Field, Icon, message, Modal, Notice, number, request, text, useConfirm, useToasts } from "../../components/studio-ui";
 
 type Data = Project & { overlayToken: string; effects: Effect[]; buttons: DeckButton[]; assets: Asset[]; settings: Settings | null };
+type UploadConfig = { maxUploadBytes: number; allowedMimeTypes: string[] };
 type Tab = "deck" | "effects" | "assets" | "settings";
 const tabs: [Tab, string, string][] = [["deck", "Bàn điều khiển", "bolt"], ["effects", "Hiệu ứng", "sparkles"], ["assets", "Thư viện", "image"], ["settings", "Cài đặt", "settings"]];
 const defaults: Settings = { projectId: "", volume: 1, queueLimit: 20, developerMode: false };
+const uploadExtensions: Record<string, string[]> = { "image/png": [".png"], "image/jpeg": [".jpg", ".jpeg"], "image/gif": [".gif"], "image/webp": [".webp"], "video/mp4": [".mp4", ".m4v"], "video/quicktime": [".mov"], "video/webm": [".webm"], "audio/mpeg": [".mp3"], "audio/ogg": [".ogg"], "audio/wav": [".wav"] };
+const uploadMimeTypes = Object.keys(uploadExtensions);
+const formatUploadSize = (bytes: number) => `${(bytes / 1024 / 1024).toLocaleString("vi-VN", { maximumFractionDigits: 2 })} MiB`;
 
 /* Asset preview: real video frame when possible, graceful label fallback. */
 function AssetPreview({ mime, url, name }: { mime: string; url: string; name: string }) {
   const [broken, setBroken] = useState(false);
   const isImage = mime.startsWith("image/");
   const isVideo = mime.startsWith("video/");
-  return <div className="asset-preview">
-    {isImage ? <img src={url} alt={name} loading="lazy" decoding="async" onError={() => setBroken(true)} />
+  return <div className="asset-preview" title={broken && isVideo ? "Đã tải lên nhưng trình duyệt không giải mã được video. Thử MP4 (H.264/AAC) hoặc WebM." : undefined}>
+    {isImage && !broken ? <img src={url} alt={name} loading="lazy" decoding="async" onError={() => setBroken(true)} />
       : isVideo && !broken ? <video src={`${url}#t=0.1`} preload="metadata" muted playsInline tabIndex={-1} onError={() => setBroken(true)} />
-      : <span><Icon name={isVideo ? "play" : "bolt"} />{isVideo ? "VIDEO" : "AUDIO"}</span>}
+      : <span><Icon name={isVideo ? "play" : isImage ? "image" : "bolt"} />{isVideo ? "VIDEO" : isImage ? "IMAGE" : "AUDIO"}</span>}
   </div>;
 }
 export default function Studio({ params }: { params: Promise<{ id: string }> }) {
@@ -27,6 +31,9 @@ export default function Studio({ params }: { params: Promise<{ id: string }> }) 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [uploadConfig, setUploadConfig] = useState<UploadConfig | null>(null);
+  const [uploadConfigError, setUploadConfigError] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState<Tab>("deck");
   const [editor, setEditor] = useState<Effect | "new" | null>(null);
   const [buttonEditor, setButtonEditor] = useState<DeckButton | "new" | null>(null);
@@ -50,10 +57,35 @@ export default function Studio({ params }: { params: Promise<{ id: string }> }) 
     setData(value);
   }, [base]);
   useEffect(() => { let active = true; setLoading(true); setData(null); setError(""); request<Data>(base).then(loaded => { if (!loaded || !Array.isArray(loaded.effects) || !Array.isArray(loaded.assets) || !Array.isArray(loaded.buttons)) throw new Error("Dữ liệu dự án không hợp lệ."); if (active) { setData(loaded); setOverlayUrl(`${window.location.origin}/overlay/${encodeURIComponent(id)}?token=${encodeURIComponent(loaded.overlayToken)}`); } }).catch(error => { if (active) { setError(message(error)); if (message(error).startsWith("HTTP 401")) window.location.assign("/login"); } }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [base, id]);
+  useEffect(() => {
+    if (tab !== "assets") return;
+    let active = true;
+    setUploadConfigError("");
+    request<UploadConfig>("/api/uploads/config").then(config => {
+      if (!Number.isSafeInteger(config.maxUploadBytes) || config.maxUploadBytes < 1 || !Array.isArray(config.allowedMimeTypes)) throw new Error("Cấu hình upload không hợp lệ.");
+      if (active) setUploadConfig(config);
+    }).catch(error => { if (active) setUploadConfigError(message(error)); });
+    return () => { active = false; };
+  }, [tab]);
   async function perform(work: () => Promise<unknown>, success: string, refresh = true, done?: () => void) {
     if (lock.current) return; lock.current = true; setBusy(true); setError("");
     try { await work(); if (success) push("success", success); done?.(); if (refresh) { try { await load(); setRevision(value => value + 1); } catch (error) { setError(`Thao tác đã thành công nhưng chưa tải lại được dữ liệu. ${message(error)}`); } } }
     catch (error) { setError(message(error)); push("error", message(error)); } finally { lock.current = false; setBusy(false); }
+  }
+  function uploadAsset(form: HTMLFormElement) {
+    if (lock.current) return;
+    const body = new FormData(form);
+    const file = body.get("file");
+    if (!(file instanceof File) || !file.size) { setError("Chọn tệp không rỗng."); return; }
+    if (uploadConfig && file.size > uploadConfig.maxUploadBytes) {
+      const note = `Tệp ${formatUploadSize(file.size)} vượt giới hạn ${formatUploadSize(uploadConfig.maxUploadBytes)} của máy chủ.`;
+      setError(note); push("error", note); return;
+    }
+    void perform(async () => {
+      setUploading(true);
+      try { return await request(`${base}/assets`, "POST", body); }
+      finally { setUploading(false); }
+    }, "Đã tải tệp lên.", true, () => form.reset());
   }
   function save(kind: string, item: { id: string } | "new", body: unknown, done: () => void) { void perform(() => request(`${base}/${kind}${item === "new" ? "" : `/${encodeURIComponent(item.id)}`}`, item === "new" ? "POST" : "PATCH", body), "Đã lưu thay đổi.", true, done); }
   async function remove(kind: string, item: { id: string }, warning: React.ReactNode, title: string) { if (await confirm({ title, danger: true, confirmLabel: "Xóa", message: warning })) void perform(() => request(`${base}/${kind}/${encodeURIComponent(item.id)}`, "DELETE"), "Đã xóa."); }
@@ -93,6 +125,8 @@ export default function Studio({ params }: { params: Promise<{ id: string }> }) 
   const currentButton = buttonEditor && buttonEditor !== "new" ? buttonEditor : undefined;
   const pageCount = Math.max(1, Math.ceil((Math.max(-1, ...(data?.buttons.map(button => button.position) ?? [])) + 1) / 12));
   const currentPage = Math.min(page, pageCount - 1);
+  const acceptedUploadMime = uploadConfig?.allowedMimeTypes ?? uploadMimeTypes;
+  const uploadAccept = acceptedUploadMime.flatMap(mime => [mime, ...(uploadExtensions[mime] ?? [])]).join(",");
   const effectSelect = (effectId?: string) => <Field label="Hiệu ứng"><select required name="effectId" defaultValue={effectId ?? ""}><option value="" disabled>Chọn hiệu ứng</option>{data?.effects.map(effect => <option key={effect.id} value={effect.id}>{effect.name}{effect.enabled ? "" : " (đã tắt)"}</option>)}</select></Field>;
   return <main className="app-shell studio-app" lang="vi"><nav className="topbar"><Brand suffix="STUDIO" /><a className="back-link" href="/"><Icon name="back" />Bảng điều khiển</a></nav>
     {host}
@@ -140,12 +174,15 @@ export default function Studio({ params }: { params: Promise<{ id: string }> }) 
         {buttonEditor && <form className="panel editor" key={currentButton?.id ?? "new"} onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); save("buttons", buttonEditor, { label: text(form, "label"), icon: text(form, "icon") || null, color: text(form, "color"), effectId: text(form, "effectId"), position: (number(form, "page") - 1) * 12 + number(form, "slot") - 1, cooldownMs: number(form, "cooldownMs"), enabled: form.has("enabled") }, () => setButtonEditor(null)); }}><h3>{currentButton ? "Sửa nút" : "Nút mới"}</h3><div className="form-grid"><Field label="Nhãn"><input name="label" required maxLength={40} defaultValue={currentButton?.label} /></Field><Field label="Biểu tượng / chữ ngắn"><input name="icon" maxLength={20} defaultValue={currentButton?.icon ?? ""} /></Field><Field label="Màu"><input name="color" type="color" defaultValue={currentButton?.color ?? "#7c3aed"} /></Field>{effectSelect(currentButton?.effectId)}<Field label="Trang"><input required type="number" name="page" min={1} max={1000} defaultValue={currentButton ? Math.floor(currentButton.position / 12) + 1 : currentPage + 1} /></Field><Field label="Vị trí trong trang (1–12)" hint="Nút trùng vị trí vẫn hiển thị cùng trang."><input required type="number" name="slot" min={1} max={12} defaultValue={currentButton ? currentButton.position % 12 + 1 : 1} /></Field><Field label="Thời gian hồi nút (ms)"><input required type="number" name="cooldownMs" min={0} max={3600000} defaultValue={currentButton?.cooldownMs ?? 0} /></Field><Check name="enabled" label="Bật nút" checked={currentButton?.enabled ?? true} /></div><div className="actions form-footer"><button><Icon name="check" />Lưu nút</button><button type="button" className="ghost" onClick={() => void discardAnd(() => setButtonEditor(null))}>Hủy</button></div></form>}
         <div className="pagination"><button className="ghost compact" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)} aria-label="Trang trước"><Icon name="back" />Trước</button><span className="page-indicator"><input aria-label="Trang bàn điều khiển" type="number" min={1} max={pageCount} value={currentPage + 1} onChange={event => setPage(Math.max(0, Math.min(pageCount - 1, Number(event.target.value) - 1)))} /><span className="page-total">/ {pageCount}</span></span><button className="ghost compact" disabled={currentPage >= pageCount - 1} onClick={() => setPage(currentPage + 1)} aria-label="Trang sau">Sau<Icon name="back" style={{ transform: "rotate(180deg)" }} /></button></div>
         <div className="studio-deck">{data.buttons.filter(button => Math.floor(button.position / 12) === currentPage).sort((a, b) => a.position - b.position).map(button => { const effect = data.effects.find(effect => effect.id === button.effectId); const isPlaying = playing?.id === button.id && playing.until > Date.now(); return <article className="deck-tile" key={button.id}><button className={isPlaying ? "fire-button playing" : "fire-button"} style={{ borderColor: button.color, background: `linear-gradient(145deg, ${button.color}55, #161925)` }} disabled={!button.enabled || !effect?.enabled} onClick={() => fireButton(button)}><span>{button.icon || "▶"}</span><strong>{button.label}</strong><small>{isPlaying ? "Đang phát…" : !button.enabled ? "Nút đã tắt" : !effect?.enabled ? "Hiệu ứng không khả dụng" : effect.name}</small></button><div className="tile-meta"><small>#{button.position % 12 + 1} · {button.cooldownMs} ms</small><button className="ghost compact" disabled={buttonEditor !== null} onClick={() => setButtonEditor(button)}><Icon name="edit" />Sửa</button><button className="danger compact" onClick={() => void remove("buttons", button, <>Xóa nút <strong>{button.label}</strong>?</>, "Xóa nút")}><Icon name="trash" />Xóa</button></div></article>; })}</div>{!data.buttons.some(button => Math.floor(button.position / 12) === currentPage) && <Empty icon="bolt">Trang này chưa có nút. Thêm nút và chọn vị trí.</Empty>}</>}
-      {tab === "assets" && <><header className="section-head"><div><h2>Thư viện tệp</h2><p className="muted">Tải từng tệp; sau đó chọn trong trình sửa hiệu ứng. Không tự phát media.</p></div></header><form className="panel upload-form" onSubmit={event => { event.preventDefault(); const form = event.currentTarget; const body = new FormData(form); const file = body.get("file"); if (!(file instanceof File) || !file.size) { setError("Chọn tệp không rỗng."); return; } void perform(() => request(`${base}/assets`, "POST", body), "Đã tải tệp lên.", true, () => form.reset()); }}>
-  <Field label="Chọn hình ảnh, video hoặc âm thanh"><input name="file" type="file" required accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/ogg,audio/wav" /></Field>
-  <button><Icon name="upload" />Tải lên</button>
-  <p className="upload-hint">PNG, JPEG, GIF, WebP, MP4, MOV, WebM, MP3, OGG, WAV. Giới hạn mặc định 10 MB; tùy cấu hình máy chủ.</p>
+      {tab === "assets" && <><header className="section-head"><div><h2>Thư viện tệp</h2><p className="muted">Tải từng tệp; sau đó chọn trong trình sửa hiệu ứng. Không tự phát media.</p></div></header><form className="panel upload-form" onSubmit={event => { event.preventDefault(); uploadAsset(event.currentTarget); }}>
+  <Field label="Chọn hình ảnh, video hoặc âm thanh"><input name="file" type="file" required accept={uploadAccept} /></Field>
+  <button disabled={busy}><Icon name="upload" />{uploading ? "Đang tải lên…" : "Tải lên"}</button>
+  <p className="upload-hint">{acceptedUploadMime.flatMap(mime => uploadExtensions[mime] ?? []).map(extension => extension.slice(1).toUpperCase()).join(", ")}. {uploadConfig ? `Giới hạn ${formatUploadSize(uploadConfig.maxUploadBytes)}/tệp.` : "Đang đọc giới hạn upload từ máy chủ…"}</p>
+  {uploadConfigError && <p role="alert" className="upload-hint">Không đọc được cấu hình upload: {uploadConfigError}</p>}
+  <p className="upload-hint">MOV tải lên được nhưng khả năng phát phụ thuộc codec của trình duyệt/OBS. Ưu tiên MP4 (H.264/AAC) hoặc WebM.</p>
+  {uploading && <p role="status" aria-live="polite" className="upload-hint">Đang tải video/tệp lên. Giữ trang mở; thời gian chờ tối đa 5 phút.</p>}
 </form>
-<div className="asset-grid">{data.assets.map(asset => { const url = assetUrl(asset); const references = data.effects.filter(effect => effect.actions.some(action => action.url === url)); const isVideo = asset.mime.startsWith("video/"); const isImage = asset.mime.startsWith("image/"); return <article className="panel asset-card" key={asset.id}><div className="asset-preview">{isImage ? <img src={url} alt={asset.name} loading="lazy" decoding="async" /> : isVideo ? <video src={`${url}#t=0.1`} preload="metadata" muted playsInline tabIndex={-1} onError={event => { event.currentTarget.replaceWith(Object.assign(document.createElement("span"), { textContent: "VIDEO" })); }} /> : <span><Icon name="bolt" />AUDIO</span>}</div><h3 title={asset.name}>{asset.name}</h3><p className="muted">{asset.mime} · {(asset.size / 1024 / 1024).toFixed(2)} MB</p><p className="muted">{references.length} hiệu ứng đang dùng</p><div className="actions"><button className="ghost compact" onClick={() => void copyText(url, "Đã sao chép đường dẫn tệp.")}><Icon name="copy" />Chép URL</button><button className="danger compact" onClick={() => void remove("assets", asset, <>Xóa vĩnh viễn tệp <strong>{asset.name}</strong>? {references.length ? `${references.length} hiệu ứng đang tham chiếu tệp này và có thể không phát được.` : "Không thể hoàn tác."}</>, "Xóa tệp")}><Icon name="trash" />Xóa</button></div></article>; })}</div>{!data.assets.length && <Empty icon="image">Thư viện trống. Tải ảnh, video hoặc âm thanh để dùng trong hiệu ứng.</Empty>}</>}
+<div className="asset-grid">{data.assets.map(asset => { const url = assetUrl(asset); const references = data.effects.filter(effect => effect.actions.some(action => action.url === url)); return <article className="panel asset-card" key={asset.id}><AssetPreview key={url} mime={asset.mime} url={url} name={asset.name} /><h3 title={asset.name}>{asset.name}</h3><p className="muted">{asset.mime} · {(asset.size / 1024 / 1024).toFixed(2)} MB</p><p className="muted">{references.length} hiệu ứng đang dùng</p><div className="actions"><button className="ghost compact" onClick={() => void copyText(url, "Đã sao chép đường dẫn tệp.")}><Icon name="copy" />Chép URL</button><button className="danger compact" onClick={() => void remove("assets", asset, <>Xóa vĩnh viễn tệp <strong>{asset.name}</strong>? {references.length ? `${references.length} hiệu ứng đang tham chiếu tệp này và có thể không phát được.` : "Không thể hoàn tác."}</>, "Xóa tệp")}><Icon name="trash" />Xóa</button></div></article>; })}</div>{!data.assets.length && <Empty icon="image">Thư viện trống. Tải ảnh, video hoặc âm thanh để dùng trong hiệu ứng.</Empty>}</>}
       {tab === "settings" && <div className="settings-columns"><form className="panel" key={`settings-${revision}`} onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void perform(() => request(`${base}/settings`, "PATCH", { volume: number(form, "volume"), queueLimit: number(form, "queueLimit"), developerMode: form.has("developerMode") }), "Đã lưu cài đặt."); }}><h2>Phát media</h2><p className="muted">Thay đổi chỉ gửi khi bấm Lưu cài đặt.</p><div className="form-grid"><Field label="Âm lượng tổng (0–1)"><input name="volume" type="number" min={0} max={1} step={0.05} required defaultValue={settings.volume} /></Field><Field label="Giới hạn hàng đợi"><input name="queueLimit" type="number" min={1} max={200} required defaultValue={settings.queueLimit} /></Field></div><Check name="developerMode" label="Chế độ nhà phát triển" checked={settings.developerMode} /><button className="form-footer"><Icon name="check" />Lưu cài đặt</button></form>
         <div><form className="panel" key={`project-${revision}`} onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); void perform(() => request(base, "PATCH", { name: text(form, "name"), description: text(form, "description") }), "Đã cập nhật dự án."); }}><h2>Dự án</h2><Field label="Tên dự án"><input name="name" required maxLength={80} defaultValue={data.name} /></Field><Field label="Mô tả"><textarea name="description" maxLength={500} rows={4} defaultValue={data.description} /></Field><button className="form-footer"><Icon name="check" />Lưu dự án</button></form><section className="panel danger-zone"><h3><Icon name="alert" />Xóa dự án</h3><p>Xóa dự án cùng hiệu ứng và nút. Không thể hoàn tác.</p><button className="danger" onClick={() => { setDeleteName(""); setDeleteOpen(true); }}><Icon name="trash" />Xóa vĩnh viễn</button></section></div></div>}
       </fieldset><footer>Lệnh phát gửi tới overlay · Studio không xác nhận trạng thái kết nối OBS</footer>

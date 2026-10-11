@@ -150,8 +150,10 @@ Cấu hình host/port trong `.env`:
 **Overlay & media**
 
 - Overlay truy cập bằng URL có token riêng (`overlayToken`) — không cần cookie session.
-- Media lưu local trong `data/uploads`: giới hạn 10 MiB/file, kiểm tra MIME và dung lượng, lưu SHA-256.
-- **Chưa có**: kiểm tra magic bytes, quét malware, adapter S3/R2.
+- Media lưu local trong `data/uploads`: giới hạn mặc định 10 MiB/file, chỉnh bằng `MAX_UPLOAD_BYTES`. Studio đọc giới hạn và định dạng cho phép từ `GET /api/uploads/config` sau đăng nhập.
+- Upload video hỗ trợ MP4, MOV (kể cả QuickTime legacy) và WebM; kiểm tra container thực tế, MIME, dung lượng và lưu SHA-256. Upload trên web có timeout 5 phút; request API thường vẫn là 20 giây.
+- MOV có thể upload được nhưng không phát nếu trình duyệt/OBS không hỗ trợ codec. Ưu tiên MP4 H.264/AAC hoặc WebM. Nếu reverse proxy trả HTTP 413, cần kiểm tra cả giới hạn upload của proxy, không chỉ `MAX_UPLOAD_BYTES`.
+- **Chưa có**: tự chuyển codec, quét malware, adapter S3/R2.
 
 **Khác**
 
@@ -168,6 +170,7 @@ Cấu hình host/port trong `.env`:
 | **Effect / Button / Trigger** | `/api/projects/:id/effects` · `.../buttons` · `.../triggers` (item dùng `/:childId`) |
 | **Settings** | `PATCH /api/projects/:id/settings` |
 | **Media** | `/api/projects/:id/assets` (upload/delete) |
+| **Cấu hình upload** | `GET /api/uploads/config` (cần đăng nhập) |
 | **Phát effect** | `POST /api/projects/:id/fire/:effectId` |
 | **Phát nút** | `POST /api/projects/:id/buttons/:childId/fire` |
 | **Điều khiển** | `POST /api/projects/:id/control` |
@@ -351,8 +354,10 @@ Host/port config in `.env`:
 **Overlay & media**
 
 - The overlay is accessed via a URL with its own token (`overlayToken`) — no session cookie needed.
-- Media stored locally in `data/uploads`: 10 MiB per file limit, MIME and size checks, SHA-256 stored.
-- **Not implemented**: magic-byte validation, malware scanning, S3/R2 adapters.
+- Media stored locally in `data/uploads`: default 10 MiB per file limit, configured by `MAX_UPLOAD_BYTES`. Studio reads the actual limit and allowed types from authenticated `GET /api/uploads/config`.
+- Video uploads support MP4, MOV (including legacy QuickTime) and WebM, with container, MIME and size checks plus SHA-256. Web uploads have a 5-minute timeout; ordinary REST requests retain a 20-second timeout.
+- Uploading MOV does not guarantee playback: browser/OBS codec support still applies. Prefer MP4 H.264/AAC or WebM. For reverse proxy HTTP 413 responses, check proxy upload limits as well as `MAX_UPLOAD_BYTES`.
+- **Not implemented**: automatic transcoding, malware scanning, S3/R2 adapters.
 
 **Other**
 
@@ -369,6 +374,7 @@ Host/port config in `.env`:
 | **Effects / Buttons / Triggers** | `/api/projects/:id/effects` · `.../buttons` · `.../triggers` (items use `/:childId`) |
 | **Settings** | `PATCH /api/projects/:id/settings` |
 | **Media** | `/api/projects/:id/assets` (upload/delete) |
+| **Upload config** | `GET /api/uploads/config` (authentication required) |
 | **Fire effect** | `POST /api/projects/:id/fire/:effectId` |
 | **Fire button** | `POST /api/projects/:id/buttons/:childId/fire` |
 | **Control** | `POST /api/projects/:id/control` |

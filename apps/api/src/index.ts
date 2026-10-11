@@ -13,7 +13,7 @@ import { prisma } from "./db.js";
 import { createRealtime } from "./realtime.js";
 import { createCooldowns, type Cooldown } from "./cooldown.js";
 import { allowedOrigin, referencesAsset } from "./local-security.js";
-import { LocalStorageProvider } from "./storage.js";
+import { InvalidMediaError, LocalStorageProvider, mediaExtensions, resolveUploadMime } from "./storage.js";
 import { clearLoginFailures, createSession, destroySession, hashPassword, loginRateLimited, recordLoginFailure, requestKey, requireAdmin, requireUser, resolveSession, sessionCookie, setSessionCookie, clearSessionCookie, startAuthMaintenance, verifyPassword, type SessionUser } from "./auth.js";
 import { buttonInput, buttonPatch, childParams, controlInput, effectInput, effectPatch, fireParams, idParams, loginInput, passwordInput, projectGrantInput, projectInput, projectPatch, settingsPatch, userCreateInput, userPatchInput } from "./schemas.js";
 
@@ -34,7 +34,8 @@ app.addHook("preHandler", async request => { request.user = (await resolveSessio
 const uploadDir = path.resolve(process.cwd(), process.env.UPLOAD_DIR ?? "data/uploads");
 const storage = new LocalStorageProvider(uploadDir);
 const maxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES ?? 10485760);
-const allowedMime = new Set((process.env.ALLOWED_UPLOAD_TYPES ?? "image/png,image/jpeg,image/gif,image/webp,video/mp4,video/quicktime,video/webm,audio/mpeg,audio/ogg,audio/wav").split(","));
+if (!Number.isSafeInteger(maxUploadBytes) || maxUploadBytes < 1) throw new Error("MAX_UPLOAD_BYTES must be a positive safe integer.");
+const allowedMime = new Set((process.env.ALLOWED_UPLOAD_TYPES ?? Object.keys(mediaExtensions).join(",")).split(",").map(mime => mime.trim().toLowerCase()).filter(mime => Object.hasOwn(mediaExtensions, mime)));
 await storage.init();
 const allowlist = (process.env.CORS_ORIGIN ?? "").split(",").map(value => value.trim()).filter(Boolean);
 app.addHook("onRequest", async (req, reply) => {
@@ -43,7 +44,7 @@ app.addHook("onRequest", async (req, reply) => {
 app.addHook("onSend", async (_req, reply) => { reply.header("X-Content-Type-Options", "nosniff"); });
 await app.register(cors, { origin: allowlist });
 await app.register(websocket, { options: { maxPayload: 16_384 } });
-await app.register(multipart, { limits: { files: 1, fileSize: maxUploadBytes } });
+await app.register(multipart, { throwFileSizeLimit: false, limits: { files: 1, fileSize: maxUploadBytes } });
 await app.register(staticFiles, { root: uploadDir, prefix: "/assets/" });
 const realtime = createRealtime();
 const { broadcast, join, send } = realtime;
@@ -197,6 +198,10 @@ app.delete("/api/admin/users/:id", async (request, reply) => {
 });
 
 app.get("/health", async () => ({ ok: true }));
+app.get("/api/uploads/config", async (request, reply) => {
+  if (!(await requireUser(request, reply))) return;
+  return { maxUploadBytes, allowedMimeTypes: [...allowedMime] };
+});
 app.get("/ready", async (_req, reply) => {
   try { await prisma.$queryRaw`SELECT 1`; return { ok: true }; }
   catch (error) { app.log.error(error, "Database readiness failed"); return reply.code(503).send({ ok: false }); }
@@ -325,14 +330,29 @@ app.post("/api/projects/:id/assets", async (req, reply) => {
   const user = await requireUser(req, reply); if (!user) return;
   const params = parse(idParams, req.params, reply); if (!params) return;
   if (!(await ownedProject(params.id, user))) return notFound(reply);
-  const file = await req.file(); if (!file) return reply.code(400).send({ error: "File required" });
-  if (!allowedMime.has(file.mimetype)) { file.file.resume(); return reply.code(415).send({ error: "Unsupported file type" }); }
-  const saved = await storage.save(file);
-  if (file.file.truncated || saved.size > maxUploadBytes) { await storage.remove(saved.path); return reply.code(413).send({ error: "File too large" }); }
   try {
-    const asset = await prisma.asset.create({ data: { projectId: params.id, name: file.filename.slice(0, 255), mime: file.mimetype, ...saved } });
-    return assetDto(asset);
-  } catch (error) { await storage.remove(saved.path); throw error; }
+    const file = await req.file(); if (!file) return reply.code(400).send({ error: "File required", message: "Chọn một tệp để tải lên." });
+    const mime = resolveUploadMime(file.mimetype, file.filename);
+    if (!allowedMime.has(mime)) {
+      file.file.resume();
+      return reply.code(415).send({ error: "Unsupported file type", message: "Định dạng tệp không được cho phép. Video hỗ trợ MP4, MOV và WebM nếu được bật trong cấu hình máy chủ." });
+    }
+    file.mimetype = mime;
+    const saved = await storage.save(file);
+    if (saved.size > maxUploadBytes) { await storage.remove(saved.path); throw Object.assign(new Error("File too large"), { statusCode: 413 }); }
+    try {
+      const asset = await prisma.asset.create({ data: { projectId: params.id, name: file.filename.slice(0, 255), mime, ...saved } });
+      return assetDto(asset);
+    } catch (error) { await storage.remove(saved.path); throw error; }
+  } catch (error) {
+    if ((error as { statusCode?: number }).statusCode === 413) {
+      return reply.code(413).send({ error: "File too large", message: `Tệp vượt giới hạn ${(maxUploadBytes / 1024 / 1024).toLocaleString("vi-VN", { maximumFractionDigits: 2 })} MiB.`, maxUploadBytes });
+    }
+    if (error instanceof InvalidMediaError) {
+      return reply.code(415).send({ error: error.message, message: "Nội dung tệp không khớp định dạng hoặc container video bị hỏng. Thử xuất lại thành MP4 (H.264/AAC) hoặc WebM." });
+    }
+    throw error;
+  }
 });
 app.delete("/api/projects/:id/assets/:childId", async (req, reply) => {
   const user = await requireUser(req, reply); if (!user) return;

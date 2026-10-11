@@ -5,7 +5,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import type { MultipartFile } from "@fastify/multipart";
 import { createCooldowns } from "./cooldown.js";
-import { LocalStorageProvider, validMagic } from "./storage.js";
+import { LocalStorageProvider, mediaExtensions, validMagic } from "./storage.js";
 import { allowedOrigin, referencesAsset } from "./local-security.js";
 import { effectInput, settingsPatch } from "./schemas.js";
 
@@ -23,6 +23,23 @@ const db = vi.hoisted(() => ({
 }));
 vi.mock("./db.js", () => ({ prisma: db }));
 import { buildApp } from "./index.js";
+
+function videoAtom(type: string, payload = Buffer.alloc(0)) {
+  const header = Buffer.alloc(8);
+  header.writeUInt32BE(header.length + payload.length);
+  header.write(type, 4, "ascii");
+  return Buffer.concat([header, payload]);
+}
+const mp4 = videoAtom("ftyp", Buffer.from("isom\0\0\0\0isommp42", "binary"));
+const mov = videoAtom("ftyp", Buffer.from("qt  \0\0\0\0qt  ", "binary"));
+const legacyMov = videoAtom("moov", videoAtom("mvhd", Buffer.alloc(100)));
+function multipartBody(filename: string, bytes: Buffer, mime?: string) {
+  return Buffer.concat([
+    Buffer.from(`--test\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n${mime ? `Content-Type: ${mime}\r\n` : ""}\r\n`),
+    bytes,
+    Buffer.from("\r\n--test--\r\n")
+  ]);
+}
 
 // Default session: a logged-in USER owning project "p". Tests override per case.
 const sessionUser = { id: "u1", username: "tester", role: "USER" as const };
@@ -108,6 +125,28 @@ describe("storage", () => {
     expect(storage.publicUrl(saved.path)).toMatch(/^\/assets\/[^/]+\.png$/);
     await expect(storage.remove(path.join(root, "..", "outside"))).rejects.toThrow("Invalid stored path");
   });
+  it("stores legacy QuickTime movies without an ftyp atom", async () => {
+    const storage = new LocalStorageProvider(root);
+    const saved = await storage.save(file(legacyMov, "video/quicktime"));
+    expect(saved.path.endsWith(".mov")).toBe(true);
+    expect(saved.size).toBe(legacyMov.length);
+  });
+  it("recognizes MOV metadata after padding larger than the buffered header", async () => {
+    const bytes = Buffer.concat([videoAtom("free", Buffer.alloc(8192)), mov]);
+    const saved = await new LocalStorageProvider(root).save(file(bytes, "video/quicktime"));
+    expect(saved.path.endsWith(".mov")).toBe(true);
+    expect(saved.size).toBe(bytes.length);
+  });
+  it.each(["", "application/octet-stream", "video/quicktime"])("rejects fake MOV contents for MIME %s and removes partial files", async mime => {
+    const upload = file(Buffer.from("<html>not a movie</html>"), mime);
+    upload.filename = "fake.mov";
+    await expect(new LocalStorageProvider(root).save(upload)).rejects.toThrow("File content");
+    expect(await readdir(root)).toEqual([]);
+  });
+  it("rejects truncated container headers", async () => {
+    expect(await validMagic("video/mp4", Buffer.from([0, 0, 0]))).toBe(false);
+    expect(await validMagic("video/quicktime", Buffer.from("ftyp"))).toBe(false);
+  });
   it("cleans mismatched, truncated and interrupted uploads", async () => {
     const storage = new LocalStorageProvider(root);
     await expect(storage.save(file(Buffer.from("<html>")))).rejects.toThrow("File content");
@@ -116,12 +155,9 @@ describe("storage", () => {
     broken.file = Readable.from((async function* () { yield png; throw new Error("interrupted"); })()) as MultipartFile["file"];
     await expect(storage.save(broken)).rejects.toThrow("interrupted");
     expect(await readdir(root)).toEqual([]);
-    expect(validMagic("image/webp", Buffer.from("RIFF1234WEBP"))).toBe(true);
-    const quickTime = Buffer.alloc(12);
-    quickTime.writeUInt32BE(12, 0);
-    quickTime.write("ftyp", 4, "ascii");
-    expect(validMagic("video/quicktime", quickTime)).toBe(true);
-    expect(validMagic("video/webm", Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))).toBe(false);
+    expect(await validMagic("image/webp", Buffer.from("RIFF1234WEBP"))).toBe(true);
+    expect(await validMagic("video/quicktime", mov)).toBe(true);
+    expect(await validMagic("video/webm", Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))).toBe(false);
   });
 });
 
@@ -133,6 +169,8 @@ describe("API with mocked DB", () => {
     vi.resetAllMocks();
     root = await mkdtemp(path.join(tmpdir(), "streamfx-api-"));
     vi.stubEnv("UPLOAD_DIR", root); vi.stubEnv("COOLDOWN_STORE", "memory"); vi.stubEnv("CORS_ORIGIN", "http://localhost:3000");
+    vi.stubEnv("MAX_UPLOAD_BYTES", "4096"); vi.stubEnv("ALLOWED_UPLOAD_TYPES", Object.keys(mediaExtensions).join(","));
+    // Use deterministic limits/types instead of inheriting the user's .env.
     db.session.findUnique.mockImplementation(async (args: { where: { id: string } }) => args.where.id === "sess-1" ? { id: "sess-1", expiresAt: new Date(Date.now() + 60_000), user: { id: "u1", username: "tester", role: "USER", blocked: false } } : null);
     db.user.findUnique.mockResolvedValue({ blocked: false, deckLimit: 3, planExpiresAt: null, _count: { projects: 1 } });
     db.project.findFirst.mockResolvedValue({ id: "p", settings: null, assets: [] });
@@ -215,6 +253,91 @@ describe("API with mocked DB", () => {
     db.effect.findMany.mockResolvedValue([{ actions: [{ url: "/assets/a.png" }] }]);
     expect((await app.inject({ method: "DELETE", url: "/api/projects/p/assets/a", cookies: { sfx_session: "sess-1" } })).statusCode).toBe(409);
     expect(db.asset.delete).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["clip.mp4", "video/mp4", mp4, "video/mp4", ".mp4"],
+    ["clip.mp4", "application/octet-stream", mp4, "video/mp4", ".mp4"],
+    ["clip.mov", "video/quicktime", mov, "video/quicktime", ".mov"],
+    ["clip.mov", "video/x-quicktime", mov, "video/quicktime", ".mov"],
+    ["legacy.mov", "video/quicktime", legacyMov, "video/quicktime", ".mov"],
+    ["clip.mov", "application/octet-stream", mov, "video/quicktime", ".mov"],
+    ["clip.MOV", undefined, mov, "video/quicktime", ".mov"]
+  ])("uploads %s with MIME %s", async (filename, mime, bytes, expectedMime, extension) => {
+    db.asset.create.mockImplementation(async ({ data }) => ({ id: "a", ...data }));
+    const response = await app.inject({
+      method: "POST", url: "/api/projects/p/assets", cookies: { sfx_session: "sess-1" },
+      headers: { "content-type": "multipart/form-data; boundary=test" },
+      payload: multipartBody(filename, bytes, mime)
+    });
+    expect(response.statusCode).toBe(200);
+    const asset = response.json();
+    expect(asset.mime).toBe(expectedMime);
+    expect(asset.url.endsWith(extension)).toBe(true);
+    expect(asset.path).toBeUndefined();
+    expect(await readdir(root)).toHaveLength(1);
+    const served = await app.inject({ url: asset.url, headers: { range: "bytes=0-7" } });
+    expect(served.statusCode).toBe(206);
+    expect(served.headers["content-type"]).toContain(expectedMime);
+    expect(served.rawPayload).toEqual(bytes.subarray(0, 8));
+  });
+  it("exposes current upload limits only to signed-in users", async () => {
+    expect((await app.inject("/api/uploads/config")).statusCode).toBe(401);
+    const response = await app.inject({ url: "/api/uploads/config", cookies: { sfx_session: "sess-1" } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ maxUploadBytes: 4096, allowedMimeTypes: expect.arrayContaining(["video/mp4", "video/quicktime", "video/webm"]) });
+  });
+  it("returns a useful 413 and leaves no file or DB record for an oversized video", async () => {
+    const bytes = Buffer.concat([mp4, Buffer.alloc(8192)]);
+    const response = await app.inject({
+      method: "POST", url: "/api/projects/p/assets", cookies: { sfx_session: "sess-1" },
+      headers: { "content-type": "multipart/form-data; boundary=test" }, payload: multipartBody("clip.mp4", bytes, "video/mp4")
+    });
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toEqual(expect.objectContaining({ error: "File too large", message: expect.stringContaining("Tệp vượt giới hạn"), maxUploadBytes: 4096 }));
+    expect(db.asset.create).not.toHaveBeenCalled();
+    expect(await readdir(root)).toEqual([]);
+  });
+  it("rejects a fake video even when its extension is MOV", async () => {
+    const response = await app.inject({
+      method: "POST", url: "/api/projects/p/assets", cookies: { sfx_session: "sess-1" },
+      headers: { "content-type": "multipart/form-data; boundary=test" }, payload: multipartBody("fake.mov", Buffer.from("not a movie"), "application/octet-stream")
+    });
+    expect(response.statusCode).toBe(415);
+    expect(response.json().message).toContain("Nội dung tệp không khớp");
+    expect(db.asset.create).not.toHaveBeenCalled();
+    expect(await readdir(root)).toEqual([]);
+  });
+  it("keeps the configured allowlist enforced for generic MIME uploads", async () => {
+    await app.close();
+    vi.stubEnv("ALLOWED_UPLOAD_TYPES", "image/png");
+    app = await buildApp();
+    const response = await app.inject({
+      method: "POST", url: "/api/projects/p/assets", cookies: { sfx_session: "sess-1" },
+      headers: { "content-type": "multipart/form-data; boundary=test" }, payload: multipartBody("clip.mov", mov, "application/octet-stream")
+    });
+    expect(response.statusCode).toBe(415);
+    expect(db.asset.create).not.toHaveBeenCalled();
+    expect(await readdir(root)).toEqual([]);
+  });
+  it.skipIf(!process.env.STREAMFX_VIDEO_FIXTURES)("streams real video fixtures when supplied for the smoke test", async () => {
+    const fixtures = process.env.STREAMFX_VIDEO_FIXTURES!;
+    await app.close();
+    vi.stubEnv("MAX_UPLOAD_BYTES", "10485760");
+    app = await buildApp();
+    const { readFile } = await import("node:fs/promises");
+    db.asset.create.mockImplementation(async ({ data }) => ({ id: "a", ...data }));
+    for (const [filename, mime] of [["clip.mp4", "video/mp4"], ["clip.mov", "video/quicktime"], ["clip.webm", "video/webm"]] as const) {
+      const bytes = await readFile(path.join(fixtures, filename));
+      const response = await app.inject({
+        method: "POST", url: "/api/projects/p/assets", cookies: { sfx_session: "sess-1" },
+        headers: { "content-type": "multipart/form-data; boundary=test" }, payload: multipartBody(filename, bytes, "application/octet-stream")
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().mime).toBe(mime);
+      const served = await app.inject({ url: response.json().url, headers: { range: "bytes=0-31" } });
+      expect(served.statusCode).toBe(206);
+      expect(served.rawPayload).toEqual(bytes.subarray(0, 32));
+    }
   });
   it("removes upload after DB failure", async () => {
     db.asset.create.mockRejectedValueOnce(new Error("DB failed"));

@@ -90,17 +90,21 @@ export function useToasts() {
 }
 
 export async function request<T>(url: string, method = "GET", body?: unknown): Promise<T> {
+  const uploading = body instanceof FormData;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20000);
+  const timer = setTimeout(() => controller.abort(), uploading ? 300_000 : 20_000);
   try {
-    const response = await fetch(url, { method, signal: controller.signal, cache: "no-store", ...(body instanceof FormData ? { body } : body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
+    const response = await fetch(url, { method, signal: controller.signal, cache: "no-store", ...(uploading ? { body: body as FormData } : body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
     const raw = await response.text();
     let value: unknown;
-    try { value = raw ? JSON.parse(raw) : undefined; } catch { throw new Error(`Phản hồi không hợp lệ (HTTP ${response.status}). Kiểm tra API.`); }
-    if (!response.ok) { const error = value as { error?: string; details?: unknown } | undefined; if (response.status === 404 && url.startsWith("/api/")) throw new Error("API không tồn tại (404). Next đang chạy riêng mà không có máy chủ API — hãy dừng và chạy 'npm run dev' từ thư mục gốc repository."); throw new Error(`HTTP ${response.status}: ${error?.error || response.statusText}${error?.details ? ` — ${JSON.stringify(error.details)}` : ""}`); }
+    try { value = raw ? JSON.parse(raw) : undefined; } catch {
+      if (uploading && response.status === 413) throw new Error("HTTP 413: Video vượt giới hạn của máy chủ hoặc reverse proxy. Kiểm tra MAX_UPLOAD_BYTES và giới hạn upload của proxy.");
+      throw new Error(`Phản hồi không hợp lệ (HTTP ${response.status}). Kiểm tra API.`);
+    }
+    if (!response.ok) { const error = value as { error?: string; message?: string; details?: unknown } | undefined; if (response.status === 404 && url.startsWith("/api/")) throw new Error("API không tồn tại (404). Next đang chạy riêng mà không có máy chủ API — hãy dừng và chạy 'npm run dev' từ thư mục gốc repository."); throw new Error(`HTTP ${response.status}: ${error?.message || error?.error || response.statusText}${error?.details ? ` — ${JSON.stringify(error.details)}` : ""}`); }
     return value as T;
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw new Error("Yêu cầu quá hạn. Tải lại trước khi thử lại để tránh tạo trùng.");
+    if (error instanceof Error && error.name === "AbortError") throw new Error(uploading ? "Tải tệp quá hạn sau 5 phút. Kiểm tra mạng và tải lại thư viện trước khi gửi lại để tránh tạo trùng." : "Yêu cầu quá hạn. Tải lại trước khi thử lại để tránh tạo trùng.");
     if (error instanceof TypeError) throw new Error("Không kết nối được API. Kiểm tra máy chủ và mạng; tải lại trước khi gửi lại.");
     throw error;
   } finally { clearTimeout(timer); }
